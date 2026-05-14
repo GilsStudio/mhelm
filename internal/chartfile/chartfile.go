@@ -23,6 +23,10 @@ type Endpoint struct {
 type File struct {
 	Upstream   Endpoint `json:"upstream"`
 	Downstream Endpoint `json:"downstream"`
+	// ValuesFiles are paths to YAML values overrides, relative to chart.json's
+	// directory. Merged in order during `mhelm discover` so rendered manifests
+	// reflect the values the consumer intends to deploy with.
+	ValuesFiles []string `json:"valuesFiles,omitempty"`
 }
 
 func Load(filePath string) (File, error) {

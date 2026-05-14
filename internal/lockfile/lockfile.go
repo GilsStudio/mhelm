@@ -17,8 +17,26 @@ type File struct {
 	Chart         Chart      `json:"chart"`
 	Upstream      Upstream   `json:"upstream"`
 	Downstream    Downstream `json:"downstream"`
+	Images        []Image    `json:"images,omitempty"`
 	Mirror        Mirror     `json:"mirror"`
 }
+
+// Image is a container image referenced by the chart's rendered manifests.
+// Discovered by `mhelm discover`; mirrored in later phases.
+type Image struct {
+	Ref         string       `json:"ref"`
+	Digest      string       `json:"digest,omitempty"`
+	ValuesPaths []ValuesPath `json:"valuesPaths,omitempty"`
+}
+
+// ValuesPath is a dotted path in the chart's merged values that produces
+// the parent Image's reference.
+type ValuesPath struct {
+	Path     string `json:"path"`
+	Accuracy string `json:"accuracy"`
+}
+
+const AccuracyHeuristic = "heuristic"
 
 type Chart struct {
 	Name    string `json:"name"`

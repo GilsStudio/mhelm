@@ -94,7 +94,7 @@ Network reads only — no pushes, no signing.`,
 			} else {
 				suffix = " (digest unresolved)"
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "  %s%s\n", img.Ref, suffix)
+			fmt.Fprintf(cmd.OutOrStdout(), "  [%s] %s%s\n", img.Source, img.Ref, suffix)
 			for _, vp := range img.ValuesPaths {
 				fmt.Fprintf(cmd.OutOrStdout(), "    ← values path: %s (%s)\n", vp.Path, vp.Accuracy)
 			}

@@ -1,9 +1,12 @@
 // Package discover renders a Helm chart with the consumer's intended values
-// and extracts every container image reference from the rendered manifests,
-// honoring Chart.yaml's artifacthub.io/images annotation when present.
+// and extracts every container image reference it carries. The container
+// walker handles the common case; env-var, ConfigMap-data, and CRD-spec
+// extractors catch operator patterns; chart.json#extraImages is the
+// always-available manual escape hatch.
 //
-// Each image's manifest digest is resolved against the registry via HEAD
-// (crane.Digest) so the lockfile pins by sha256 rather than mutable tag.
+// Untrusted (regex-derived) candidates are confirmed by HEADing the
+// registry via crane.Digest — strings that aren't real pullable images
+// are dropped.
 package discover
 
 import (
@@ -12,13 +15,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
-	"strings"
 
 	"github.com/gilsstudio/mhelm/internal/chartfile"
 	"github.com/gilsstudio/mhelm/internal/chartpull"
 	"github.com/gilsstudio/mhelm/internal/lockfile"
-	"github.com/google/go-containerregistry/pkg/crane"
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
 	"helm.sh/helm/v3/pkg/chartutil"
@@ -38,8 +38,9 @@ type Result struct {
 }
 
 // Run pulls the chart referenced by cf.Upstream, renders it with the values
-// listed in cf.ValuesFiles (resolved relative to baseDir), discovers all
-// container image refs, and resolves their registry digests.
+// listed in cf.ValuesFiles (resolved relative to baseDir), discovers every
+// container image it references (manifest, env, ConfigMap, CRD-spec, manual),
+// resolves their registry digests, and builds the mirror-values override.
 func Run(ctx context.Context, cf chartfile.File, baseDir string) (Result, error) {
 	var res Result
 
@@ -65,32 +66,71 @@ func Run(ctx context.Context, cf chartfile.File, baseDir string) (Result, error)
 		return res, fmt.Errorf("render: %w", err)
 	}
 
-	refs := extractFromManifests(rendered)
-	refs = append(refs, extractFromAnnotations(c)...)
-	refs = dedupe(refs)
-	sort.Strings(refs)
-
-	candidates := findImageCandidates(merged)
-	matches := matchCandidates(refs, candidates)
-
-	for _, ref := range refs {
-		img := lockfile.Image{Ref: ref}
-		if d, err := crane.Digest(ref); err == nil {
-			img.Digest = d
+	// 1. Run every extractor against every rendered doc.
+	docs := parseDocs(rendered)
+	var cands []candidate
+	for _, doc := range docs {
+		cands = append(cands, extractFromContainers(doc)...)
+		cands = append(cands, extractFromEnv(doc)...)
+		cands = append(cands, extractFromConfigMap(doc)...)
+		if !isBuiltinKind(doc) {
+			cands = append(cands, extractFromCRDSpec(doc)...)
 		}
-		for _, c := range matches[ref] {
-			img.ValuesPaths = append(img.ValuesPaths, lockfile.ValuesPath{
-				Path:     c.Path,
+	}
+
+	// 2. Chart.yaml annotation entries — trusted (publisher-declared).
+	for _, ref := range extractFromAnnotations(c) {
+		cands = append(cands, candidate{Ref: ref, Source: lockfile.SourceAnnotation, Trusted: true})
+	}
+
+	// 3. Manual extraImages from chart.json — trusted (user-declared).
+	for _, e := range cf.ExtraImages {
+		cands = append(cands, candidate{Ref: e.Ref, Source: lockfile.SourceManual, Trusted: true})
+	}
+
+	// 4. Validate, dedupe, label sources.
+	res.Images = validateAndDedupe(cands)
+
+	// 5. Match each image to values paths in the chart's merged values, and
+	// build the sparse mirror-values override.
+	imageRefs := make([]string, 0, len(res.Images))
+	for _, img := range res.Images {
+		imageRefs = append(imageRefs, img.Ref)
+	}
+	ivc := findImageCandidates(merged)
+	matches := matchCandidates(imageRefs, ivc)
+	for i, img := range res.Images {
+		for _, mc := range matches[img.Ref] {
+			res.Images[i].ValuesPaths = append(res.Images[i].ValuesPaths, lockfile.ValuesPath{
+				Path:     mc.Path,
 				Accuracy: lockfile.AccuracyHeuristic,
 			})
 		}
-		res.Images = append(res.Images, img)
+	}
+	// User-supplied valuesPath from extraImages overrides/augments the
+	// heuristic match (the user explicitly told us where this image lives).
+	for _, e := range cf.ExtraImages {
+		if e.ValuesPath == "" {
+			continue
+		}
+		for i := range res.Images {
+			if res.Images[i].Ref != e.Ref {
+				continue
+			}
+			res.Images[i].ValuesPaths = append(res.Images[i].ValuesPaths, lockfile.ValuesPath{
+				Path:     e.ValuesPath,
+				Accuracy: lockfile.AccuracyManual,
+			})
+		}
 	}
 
-	res.MirrorValues = buildMirrorValues(matches, cf.Downstream.URL)
+	res.MirrorValues = buildMirrorValues(matches, cf.ExtraImages, merged, cf.Downstream.URL)
 	return res, nil
 }
 
+// renderChart returns the rendered template output and the merged Values
+// (chart defaults coalesced with any cf.ValuesFiles overrides). The merged
+// map is what findImageCandidates walks.
 func renderChart(c *chart.Chart, valuesFiles []string, baseDir string) (map[string]string, map[string]any, error) {
 	overrides := map[string]any{}
 	for _, vf := range valuesFiles {
@@ -127,52 +167,6 @@ func renderChart(c *chart.Chart, valuesFiles []string, baseDir string) (map[stri
 	return rendered, merged, nil
 }
 
-// extractFromManifests walks every rendered K8s manifest and collects any
-// `image:` string field whose ancestor is a `containers` or `initContainers`
-// slice. Misses operator-managed images (documented limitation, addressed
-// in a later phase with extended extractors).
-func extractFromManifests(rendered map[string]string) []string {
-	var images []string
-	for _, content := range rendered {
-		for _, doc := range strings.Split(content, "\n---") {
-			doc = strings.TrimSpace(doc)
-			if doc == "" {
-				continue
-			}
-			var m map[string]any
-			if err := yaml.Unmarshal([]byte(doc), &m); err != nil {
-				continue
-			}
-			walk(m, false, &images)
-		}
-	}
-	return images
-}
-
-func walk(node any, underContainers bool, out *[]string) {
-	switch v := node.(type) {
-	case map[string]any:
-		for k, child := range v {
-			switch k {
-			case "image":
-				if underContainers {
-					if s, ok := child.(string); ok && s != "" {
-						*out = append(*out, s)
-					}
-				}
-			case "containers", "initContainers":
-				walk(child, true, out)
-			default:
-				walk(child, false, out)
-			}
-		}
-	case []any:
-		for _, item := range v {
-			walk(item, underContainers, out)
-		}
-	}
-}
-
 // extractFromAnnotations reads Chart.yaml's `artifacthub.io/images`
 // annotation (a YAML list of `{name, image}` entries) when present.
 func extractFromAnnotations(c *chart.Chart) []string {
@@ -194,19 +188,6 @@ func extractFromAnnotations(c *chart.Chart) []string {
 		if e.Image != "" {
 			out = append(out, e.Image)
 		}
-	}
-	return out
-}
-
-func dedupe(in []string) []string {
-	seen := make(map[string]struct{}, len(in))
-	out := in[:0]
-	for _, s := range in {
-		if _, ok := seen[s]; ok {
-			continue
-		}
-		seen[s] = struct{}{}
-		out = append(out, s)
 	}
 	return out
 }

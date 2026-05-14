@@ -26,8 +26,20 @@ type File struct {
 type Image struct {
 	Ref         string       `json:"ref"`
 	Digest      string       `json:"digest,omitempty"`
+	Source      string       `json:"source,omitempty"` // one of the Source* constants
 	ValuesPaths []ValuesPath `json:"valuesPaths,omitempty"`
 }
+
+// Source labels record *how* an image was discovered. Used by reviewers to
+// understand the audit trail; ordering reflects increasing fragility.
+const (
+	SourceManifest   = "manifest"   // containers[].image / initContainers[].image
+	SourceAnnotation = "annotation" // Chart.yaml artifacthub.io/images
+	SourceManual     = "manual"     // chart.json extraImages[]
+	SourceEnv        = "env"        // containers[].env[].value (regex + validated)
+	SourceConfigMap  = "configmap"  // any ConfigMap data value (regex + validated)
+	SourceCRDSpec    = "crd-spec"   // non-builtin kind walked (regex + validated)
+)
 
 // ValuesPath is a dotted path in the chart's merged values that produces
 // the parent Image's reference.
@@ -36,7 +48,10 @@ type ValuesPath struct {
 	Accuracy string `json:"accuracy"`
 }
 
-const AccuracyHeuristic = "heuristic"
+const (
+	AccuracyHeuristic = "heuristic"
+	AccuracyManual    = "manual"
+)
 
 type Chart struct {
 	Name    string `json:"name"`

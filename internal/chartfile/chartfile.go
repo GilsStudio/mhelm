@@ -27,6 +27,18 @@ type File struct {
 	// directory. Merged in order during `mhelm discover` so rendered manifests
 	// reflect the values the consumer intends to deploy with.
 	ValuesFiles []string `json:"valuesFiles,omitempty"`
+	// ExtraImages are images that automated discovery can't find (operator-managed,
+	// CRD-embedded refs the operator pulls at runtime, hardcoded operator defaults).
+	// They are mirrored alongside auto-discovered images and, when ValuesPath is
+	// set, rewritten into mirror-values.yaml.
+	ExtraImages []ExtraImage `json:"extraImages,omitempty"`
+}
+
+// ExtraImage is a manual entry the user adds when discover misses an image
+// (operator pattern, CRD-only chart, etc.). Reviewable in git.
+type ExtraImage struct {
+	Ref        string `json:"ref"`
+	ValuesPath string `json:"valuesPath,omitempty"`
 }
 
 func Load(filePath string) (File, error) {
@@ -67,6 +79,11 @@ func (f File) Validate() error {
 	}
 	if !strings.HasPrefix(f.Downstream.URL, "oci://") {
 		return fmt.Errorf("downstream.url must start with oci://")
+	}
+	for i, e := range f.ExtraImages {
+		if e.Ref == "" {
+			return fmt.Errorf("extraImages[%d].ref is required", i)
+		}
 	}
 	return nil
 }

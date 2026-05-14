@@ -1,0 +1,6 @@
+apiVersion: example.test/v1
+kind: TinyResource
+metadata:
+  name: {{ .Release.Name }}-crd
+spec:
+  workerImage: {{ .Values.image.registry }}/upstream/worker:1.0

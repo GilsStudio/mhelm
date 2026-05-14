@@ -1,0 +1,11 @@
+# __REGISTRY__ is a placeholder substituted by the integration test setup
+# with the live testcontainers registry host:port.
+image:
+  registry: __REGISTRY__
+  repository: upstream/app
+  tag: "1.0"
+
+initImage: __REGISTRY__/upstream/init:1.0
+
+configmap:
+  embeddedImage: __REGISTRY__/upstream/configmap-image:1.0

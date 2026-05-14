@@ -1,0 +1,10 @@
+apiVersion: v2
+name: tinychart
+description: Minimal chart used by mhelm's integration tests.
+type: application
+version: 0.1.0
+appVersion: "1.0"
+annotations:
+  artifacthub.io/images: |
+    - name: annotated
+      image: __REGISTRY__/upstream/annotated:1.0

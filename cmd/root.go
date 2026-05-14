@@ -9,7 +9,22 @@ var Version = "dev"
 
 var rootCmd = &cobra.Command{
 	Use:   "mhelm",
-	Short: "Mirror Helm charts to a private OCI registry",
+	Short: "Mirror Helm charts to a private OCI registry with supply-chain provenance",
+	Long: `mhelm (Mirror HELM) is the scaffolding half of a chart-mirroring framework.
+
+It produces two files that describe how a single Helm chart — and every
+container image it references — should be mirrored from an upstream source
+to a private OCI registry:
+
+  chart.json       user-edited input spec (upstream ref + downstream registry)
+  chart-lock.json  generated source of truth: pinned digests, mirror metadata
+
+The mhelm GitHub Action consumes these files in CI to perform the actual
+mirror, cosign-sign every artifact via ambient OIDC, and attach SBOM / vuln /
+SLSA / MirrorProvenance attestations. The CLI itself is network-read-only:
+signing keys and registry credentials never need to leave CI.
+
+See README.md for the full documentation.`,
 }
 
 func init() {

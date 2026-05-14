@@ -16,28 +16,46 @@ import (
 // When the same ref shows up from multiple sources, the highest-trust
 // source wins per sourceRank.
 func validateAndDedupe(cands []candidate) []lockfile.Image {
+	merged := mergeCandidates(cands)
+	return resolveDigests(merged)
+}
+
+// mergeCandidates deduplicates candidates by Ref, keeping the highest-trust
+// source per sourceRank. Trusted=true wins if any contributing candidate
+// was trusted. Pure logic — no network access.
+func mergeCandidates(cands []candidate) []candidate {
 	merged := map[string]candidate{}
 	for _, c := range cands {
 		prev, ok := merged[c.Ref]
 		if !ok || sourceRank(c.Source) < sourceRank(prev.Source) {
 			merged[c.Ref] = c
 		}
-		// Preserve Trusted=true if any source for this ref was trusted.
 		if c.Trusted {
 			m := merged[c.Ref]
 			m.Trusted = true
 			merged[c.Ref] = m
 		}
 	}
+	out := make([]candidate, 0, len(merged))
+	for _, c := range merged {
+		out = append(out, c)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Ref < out[j].Ref })
+	return out
+}
 
+// resolveDigests HEADs each candidate against its registry in parallel and
+// builds the final lockfile.Image slice. Untrusted candidates whose digest
+// can't be resolved are dropped.
+func resolveDigests(cands []candidate) []lockfile.Image {
 	type result struct {
 		c      candidate
 		digest string
 		ok     bool
 	}
-	results := make([]result, 0, len(merged))
-	for _, c := range merged {
-		results = append(results, result{c: c})
+	results := make([]result, len(cands))
+	for i, c := range cands {
+		results[i] = result{c: c}
 	}
 
 	const maxParallel = 8
@@ -61,7 +79,7 @@ func validateAndDedupe(cands []candidate) []lockfile.Image {
 	var out []lockfile.Image
 	for _, r := range results {
 		if !r.ok && !r.c.Trusted {
-			continue // regex source that registry couldn't confirm — drop
+			continue
 		}
 		out = append(out, lockfile.Image{
 			Ref:    r.c.Ref,

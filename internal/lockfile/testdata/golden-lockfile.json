@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "chart": {
+    "name": "tinychart",
+    "version": "0.1.0"
+  },
+  "upstream": {
+    "type": "repo",
+    "url": "https://example.com/charts",
+    "chartContentDigest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "ociManifestDigest": "sha256:deadbeef00000000000000000000000000000000000000000000000000000000",
+    "signature": {
+      "verified": true,
+      "type": "cosign-keyless",
+      "subject": "https://github.com/org/repo/.github/workflows/release.yml@refs/heads/main",
+      "issuer": "https://token.actions.githubusercontent.com",
+      "rekorLogIndex": 12345
+    }
+  },
+  "downstream": {
+    "ref": "ghcr.io/mirror/tinychart:0.1.0",
+    "ociManifestDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  },
+  "images": [
+    {
+      "ref": "registry.io/app:1",
+      "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "source": "manifest",
+      "valuesPaths": [
+        {
+          "path": "image",
+          "accuracy": "heuristic"
+        }
+      ],
+      "downstreamRef": "ghcr.io/mirror/app:1",
+      "downstreamDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "signature": {
+        "verified": false,
+        "type": "none"
+      }
+    }
+  ],
+  "mirror": {
+    "tool": "mhelm",
+    "version": "v0.1.0",
+    "timestamp": "2026-05-14T00:00:00Z"
+  },
+  "drift": {
+    "checkedAt": "2026-05-14T01:00:00Z",
+    "findings": [
+      {
+        "kind": "upstream-rotation",
+        "subject": "registry.io/app:1",
+        "expected": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        "actual": "sha256:badbadbadbadbadbadbadbadbadbadbadbadbadbadbadbadbadbadbadbadbad0",
+        "note": "upstream image manifest digest changed under the same ref"
+      }
+    ]
+  }
+}

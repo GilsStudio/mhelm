@@ -1,0 +1,41 @@
+{
+  "buildDefinition": {
+    "buildType": "https://mhelm.dev/MirrorBuild/v1",
+    "externalParameters": {
+      "source": {
+        "uri": "git+https://github.com/org/repo@refs/heads/main",
+        "digest": {
+          "gitCommit": "deadbeef"
+        }
+      },
+      "chartDir": "charts/tiny"
+    },
+    "resolvedDependencies": [
+      {
+        "uri": "https://example.com/charts",
+        "digest": {
+          "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        },
+        "name": "tinychart@0.1.0"
+      },
+      {
+        "uri": "registry.io/app:1",
+        "digest": {
+          "sha256": "abcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabca"
+        }
+      }
+    ]
+  },
+  "runDetails": {
+    "builder": {
+      "id": "https://github.com/org/repo/.github/workflows/mirror.yml@refs/heads/main",
+      "version": {
+        "mhelm": "v1.2.3"
+      }
+    },
+    "metadata": {
+      "invocationId": "12345-2",
+      "startedOn": "2026-05-14T12:00:00Z"
+    }
+  }
+}

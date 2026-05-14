@@ -26,6 +26,10 @@ const (
 	BuildType     = "https://mhelm.dev/MirrorBuild/v1"
 )
 
+// now is the clock used for Metadata.StartedOn. Overridden by tests for
+// deterministic golden output.
+var now = func() time.Time { return time.Now().UTC() }
+
 type Predicate struct {
 	BuildDefinition BuildDefinition `json:"buildDefinition"`
 	RunDetails      RunDetails      `json:"runDetails"`
@@ -84,7 +88,7 @@ func Build(cf chartfile.File, lf lockfile.File, dir, mhelmVersion string) Predic
 			},
 			Metadata: Metadata{
 				InvocationID: invocationID(),
-				StartedOn:    time.Now().UTC(),
+				StartedOn:    now(),
 			},
 		},
 	}

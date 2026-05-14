@@ -23,6 +23,10 @@ import (
 
 const PredicateType = "https://mhelm.dev/MirrorProvenance/v1"
 
+// now is the clock used for RanAt. Overridden by tests for deterministic
+// golden output.
+var now = func() time.Time { return time.Now().UTC() }
+
 type Predicate struct {
 	Type               string           `json:"_type"`
 	Tool               Tool             `json:"tool"`
@@ -93,7 +97,7 @@ func Build(cf chartfile.File, lf lockfile.File, mhelmVersion string) Predicate {
 	p := Predicate{
 		Type:  PredicateType,
 		Tool:  Tool{Name: "mhelm", Version: mhelmVersion},
-		RanAt: time.Now().UTC(),
+		RanAt: now(),
 		Upstream: Upstream{
 			Type:               cf.Upstream.Type,
 			URL:                cf.Upstream.URL,

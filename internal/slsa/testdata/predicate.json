@@ -1,0 +1,34 @@
+{
+  "buildDefinition": {
+    "buildType": "https://mhelm.dev/MirrorBuild/v1",
+    "externalParameters": {
+      "chartDir": "charts/tiny"
+    },
+    "resolvedDependencies": [
+      {
+        "uri": "https://example.com/charts",
+        "digest": {
+          "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        },
+        "name": "tinychart@0.1.0"
+      },
+      {
+        "uri": "registry.io/app:1",
+        "digest": {
+          "sha256": "abcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabca"
+        }
+      }
+    ]
+  },
+  "runDetails": {
+    "builder": {
+      "id": "",
+      "version": {
+        "mhelm": "v1.2.3"
+      }
+    },
+    "metadata": {
+      "startedOn": "2026-05-14T12:00:00Z"
+    }
+  }
+}

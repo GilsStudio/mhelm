@@ -70,18 +70,28 @@ func Run(ctx context.Context, cf chartfile.File, lf lockfile.File, opts Options)
 func checkChartUpstream(cf chartfile.File, lf lockfile.File) []lockfile.DriftFinding {
 	switch cf.Upstream.Type {
 	case chartfile.TypeRepo:
-		return checkChartUpstreamRepo(cf, lf)
+		idx, err := loadIndex(cf.Upstream.URL)
+		if err != nil {
+			return nil
+		}
+		return compareChartRepoDigest(idx, cf, lf)
 	case chartfile.TypeOCI:
-		return checkChartUpstreamOCI(cf, lf)
+		if lf.Upstream.OCIManifestDigest == "" {
+			return nil
+		}
+		ref := strings.TrimPrefix(cf.Upstream.URL, "oci://") + ":" + cf.Upstream.Version
+		got, err := crane.Digest(ref, craneOpts()...)
+		if err != nil {
+			return nil
+		}
+		return compareChartOCIDigest(ref, got, lf)
 	}
 	return nil
 }
 
-func checkChartUpstreamRepo(cf chartfile.File, lf lockfile.File) []lockfile.DriftFinding {
-	idx, err := loadIndex(cf.Upstream.URL)
-	if err != nil {
-		return nil
-	}
+// compareChartRepoDigest compares a Helm repo index's reported digest for
+// the pinned chart version against the lockfile. Pure (no network).
+func compareChartRepoDigest(idx *repo.IndexFile, cf chartfile.File, lf lockfile.File) []lockfile.DriftFinding {
 	cv, err := idx.Get(cf.Upstream.Name, cf.Upstream.Version)
 	if err != nil {
 		return []lockfile.DriftFinding{{
@@ -103,15 +113,9 @@ func checkChartUpstreamRepo(cf chartfile.File, lf lockfile.File) []lockfile.Drif
 	}}
 }
 
-func checkChartUpstreamOCI(cf chartfile.File, lf lockfile.File) []lockfile.DriftFinding {
-	if lf.Upstream.OCIManifestDigest == "" {
-		return nil
-	}
-	ref := strings.TrimPrefix(cf.Upstream.URL, "oci://") + ":" + cf.Upstream.Version
-	got, err := crane.Digest(ref, craneOpts()...)
-	if err != nil {
-		return nil
-	}
+// compareChartOCIDigest compares an OCI manifest digest against the lockfile.
+// Pure (no network).
+func compareChartOCIDigest(ref, got string, lf lockfile.File) []lockfile.DriftFinding {
 	if got == lf.Upstream.OCIManifestDigest {
 		return nil
 	}
@@ -124,15 +128,41 @@ func checkChartUpstreamOCI(cf chartfile.File, lf lockfile.File) []lockfile.Drift
 	}}
 }
 
+// compareImageDigest produces an upstream-rotation finding if got differs
+// from expected. Returns nil on match. Pure (no network).
+func compareImageDigest(ref, expected, got string) *lockfile.DriftFinding {
+	if got == expected {
+		return nil
+	}
+	return &lockfile.DriftFinding{
+		Kind:     lockfile.DriftKindUpstreamRotation,
+		Subject:  ref,
+		Expected: expected,
+		Actual:   got,
+		Note:     "upstream image manifest digest changed under the same ref",
+	}
+}
+
+// compareDownstreamImageDigest produces a downstream-tampered finding if
+// got differs from expected. Returns nil on match. Pure (no network).
+func compareDownstreamImageDigest(ref, expected, got string) *lockfile.DriftFinding {
+	if got == expected {
+		return nil
+	}
+	return &lockfile.DriftFinding{
+		Kind:     lockfile.DriftKindDownstreamTampered,
+		Subject:  ref,
+		Expected: expected,
+		Actual:   got,
+		Note:     "downstream image manifest digest no longer matches the mirrored value",
+	}
+}
+
 func checkImagesUpstream(lf lockfile.File) []lockfile.DriftFinding {
 	type job struct {
 		idx int
 		img lockfile.Image
 	}
-	type result struct {
-		f *lockfile.DriftFinding
-	}
-
 	jobs := make([]job, 0, len(lf.Images))
 	for i, img := range lf.Images {
 		if img.Digest == "" {
@@ -140,27 +170,19 @@ func checkImagesUpstream(lf lockfile.File) []lockfile.DriftFinding {
 		}
 		jobs = append(jobs, job{idx: i, img: img})
 	}
-	results := make([]result, len(jobs))
+	results := make([]*lockfile.DriftFinding, len(jobs))
 	parallel(len(jobs), func(i int) {
 		got, err := crane.Digest(jobs[i].img.Ref, craneOpts()...)
 		if err != nil {
 			return
 		}
-		if got != jobs[i].img.Digest {
-			results[i].f = &lockfile.DriftFinding{
-				Kind:     lockfile.DriftKindUpstreamRotation,
-				Subject:  jobs[i].img.Ref,
-				Expected: jobs[i].img.Digest,
-				Actual:   got,
-				Note:     "upstream image manifest digest changed under the same ref",
-			}
-		}
+		results[i] = compareImageDigest(jobs[i].img.Ref, jobs[i].img.Digest, got)
 	})
 
 	out := make([]lockfile.DriftFinding, 0, len(jobs))
-	for _, r := range results {
-		if r.f != nil {
-			out = append(out, *r.f)
+	for _, f := range results {
+		if f != nil {
+			out = append(out, *f)
 		}
 	}
 	return out
@@ -174,13 +196,19 @@ func checkChartDownstream(lf lockfile.File) []lockfile.DriftFinding {
 	if err != nil {
 		return nil
 	}
-	if got == lf.Downstream.OCIManifestDigest {
+	return compareChartDownstreamDigest(lf.Downstream.Ref, lf.Downstream.OCIManifestDigest, got)
+}
+
+// compareChartDownstreamDigest compares a downstream chart manifest digest
+// against the lockfile. Pure (no network).
+func compareChartDownstreamDigest(ref, expected, got string) []lockfile.DriftFinding {
+	if got == expected {
 		return nil
 	}
 	return []lockfile.DriftFinding{{
 		Kind:     lockfile.DriftKindDownstreamTampered,
-		Subject:  lf.Downstream.Ref,
-		Expected: lf.Downstream.OCIManifestDigest,
+		Subject:  ref,
+		Expected: expected,
 		Actual:   got,
 		Note:     "downstream chart manifest digest no longer matches the mirrored value",
 	}}
@@ -203,15 +231,7 @@ func checkImagesDownstream(lf lockfile.File) []lockfile.DriftFinding {
 		if err != nil {
 			return
 		}
-		if got != jobs[i].digest {
-			results[i] = &lockfile.DriftFinding{
-				Kind:     lockfile.DriftKindDownstreamTampered,
-				Subject:  jobs[i].ref,
-				Expected: jobs[i].digest,
-				Actual:   got,
-				Note:     "downstream image manifest digest no longer matches the mirrored value",
-			}
-		}
+		results[i] = compareDownstreamImageDigest(jobs[i].ref, jobs[i].digest, got)
 	})
 
 	out := make([]lockfile.DriftFinding, 0, len(jobs))
@@ -228,11 +248,6 @@ func checkImagesDownstream(lf lockfile.File) []lockfile.DriftFinding {
 // its own release cadence and a single drift report shouldn't conflate
 // chart upgrades with per-image upgrades.
 func checkNewVersions(cf chartfile.File, lf lockfile.File) []lockfile.DriftFinding {
-	current, err := semver.NewVersion(cf.Upstream.Version)
-	if err != nil {
-		return nil
-	}
-
 	var tags []string
 	switch cf.Upstream.Type {
 	case chartfile.TypeRepo:
@@ -253,7 +268,17 @@ func checkNewVersions(cf chartfile.File, lf lockfile.File) []lockfile.DriftFindi
 	default:
 		return nil
 	}
+	return compareNewVersions(cf.Upstream.Version, lf.Chart.Name, tags)
+}
 
+// compareNewVersions filters tags for valid, non-prerelease semvers higher
+// than current, and returns at most one finding pointing at the latest.
+// Pure (no network).
+func compareNewVersions(currentVersion, subject string, tags []string) []lockfile.DriftFinding {
+	current, err := semver.NewVersion(currentVersion)
+	if err != nil {
+		return nil
+	}
 	var higher []*semver.Version
 	for _, t := range tags {
 		v, err := semver.NewVersion(t)
@@ -271,8 +296,8 @@ func checkNewVersions(cf chartfile.File, lf lockfile.File) []lockfile.DriftFindi
 	latest := higher[len(higher)-1]
 	return []lockfile.DriftFinding{{
 		Kind:     lockfile.DriftKindNewVersionAvailable,
-		Subject:  lf.Chart.Name,
-		Expected: cf.Upstream.Version,
+		Subject:  subject,
+		Expected: currentVersion,
 		Actual:   latest.Original(),
 		Note:     fmt.Sprintf("%d newer release(s) available; latest is %s", len(higher), latest.Original()),
 	}}

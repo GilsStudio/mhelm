@@ -1,0 +1,47 @@
+{
+  "_type": "https://mhelm.dev/MirrorProvenance/v1",
+  "tool": {
+    "name": "mhelm",
+    "version": "v1.2.3"
+  },
+  "ranAt": "2026-05-14T12:00:00Z",
+  "upstream": {
+    "type": "repo",
+    "url": "https://example.com/charts",
+    "chartName": "tinychart",
+    "chartVersion": "0.1.0",
+    "chartContentDigest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  },
+  "downstream": {
+    "registryPrefix": "ghcr.io/mirror/tinychart",
+    "chart": {
+      "ref": "ghcr.io/mirror/tinychart:0.1.0",
+      "manifestDigest": "sha256:111111111111111111111111111111111111111111111111111111111111111111"
+    },
+    "images": [
+      {
+        "upstreamRef": "registry.io/app:1",
+        "downstreamRef": "ghcr.io/mirror/app:1",
+        "manifestDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      }
+    ]
+  },
+  "upstreamSignatures": [
+    {
+      "ref": "registry.io/app:1",
+      "verified": true,
+      "type": "cosign-keyless",
+      "subject": "https://github.com/upstream/app/.github/workflows/release.yml@refs/heads/main",
+      "issuer": "https://token.actions.githubusercontent.com",
+      "rekorLogIndex": 99
+    }
+  ],
+  "buildContext": {
+    "repository": "org/repo",
+    "workflow": "mirror",
+    "runId": "12345",
+    "runAttempt": "1",
+    "sha": "deadbeef",
+    "refName": "main"
+  }
+}

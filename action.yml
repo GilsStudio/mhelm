@@ -1,0 +1,234 @@
+name: 'mhelm — supply-chain-secure Helm chart mirror'
+description: >-
+  Mirror a Helm chart and every container image it references to a private
+  OCI registry, then cosign-sign each artifact and attach SBOM + vuln +
+  MirrorProvenance attestations. Pinned digests committed to chart-lock.json.
+author: 'gilsstudio'
+branding:
+  icon: 'package'
+  color: 'blue'
+
+inputs:
+  dir:
+    description: 'Directory containing chart.json (relative to the consumer repo checkout root).'
+    required: true
+  command:
+    description: >-
+      Operation to run: `mirror` (the full discover/verify/mirror/sign+attest
+      pipeline) or `drift` (just the read-only drift check writing findings
+      into chart-lock.json#drift).
+    required: false
+    default: 'mirror'
+  cosign-version:
+    description: 'cosign release to install (e.g. v2.6.3, or "latest").'
+    required: false
+    default: 'v2.6.3'
+  sign:
+    description: >-
+      Sign and attest every downstream artifact (cosign + syft SBOM + grype vuln
+      + SLSA + MirrorProvenance). Mirror mode only. Requires the calling
+      workflow to grant `permissions: { id-token: write, packages: write }`.
+    required: false
+    default: 'true'
+  verify:
+    description: 'Run `mhelm verify` between discover and mirror. Mirror mode only.'
+    required: false
+    default: 'true'
+  strict-verify:
+    description: 'When verify is true, fail the step on any unverified upstream image.'
+    required: false
+    default: 'false'
+  drift-exit-zero:
+    description: >-
+      Drift mode only. When true, the action exits 0 even if drift is detected
+      — useful when the workflow opens a PR rather than failing.
+    required: false
+    default: 'true'
+  copy-upstream-attestations:
+    description: >-
+      Mirror mode only. Forward upstream cosign signatures + attestations from
+      the source registry into the downstream so consumers see both the
+      publisher's provenance and mhelm's. Best-effort: failures (no upstream
+      attestations exist) are logged but never fail the job.
+    required: false
+    default: 'true'
+
+outputs:
+  lockfile:
+    description: 'Absolute path to the updated chart-lock.json.'
+    value: ${{ steps.mirror.outputs.lockfile }}
+  mirror-values:
+    description: 'Absolute path to the generated mirror-values.yaml.'
+    value: ${{ steps.mirror.outputs.mirror-values }}
+  provenance:
+    description: 'Absolute path to mirror-provenance.json (set only when sign=true).'
+    value: ${{ steps.provenance.outputs.path }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup Go (matches mhelm go.mod)
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: ${{ github.action_path }}/go.mod
+        cache-dependency-path: ${{ github.action_path }}/go.sum
+
+    - name: Build mhelm
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+        cd "$ACTION_PATH"
+        go build -trimpath -ldflags "-X github.com/gilsstudio/mhelm/cmd.Version=${GITHUB_ACTION_REF:-dev}" -o "$RUNNER_TEMP/mhelm" .
+        echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+    - name: Install cosign
+      if: inputs.command == 'mirror' && inputs.sign == 'true'
+      uses: sigstore/cosign-installer@v3
+      with:
+        cosign-release: ${{ inputs.cosign-version }}
+
+    - name: Install syft
+      if: inputs.command == 'mirror' && inputs.sign == 'true'
+      uses: anchore/sbom-action/download-syft@v0
+
+    - name: Install grype
+      if: inputs.command == 'mirror' && inputs.sign == 'true'
+      uses: anchore/scan-action/download-grype@v3
+
+    - name: mhelm discover
+      if: inputs.command == 'mirror'
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      run: mhelm discover "${{ inputs.dir }}"
+
+    - name: mhelm verify
+      if: inputs.command == 'mirror' && inputs.verify == 'true'
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      env:
+        STRICT: ${{ inputs.strict-verify }}
+        DIR: ${{ inputs.dir }}
+      run: |
+        if [ "$STRICT" = "true" ]; then
+          mhelm verify --strict "$DIR"
+        else
+          mhelm verify "$DIR"
+        fi
+
+    - name: mhelm mirror
+      id: mirror
+      if: inputs.command == 'mirror'
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      env:
+        DIR: ${{ inputs.dir }}
+      run: |
+        set -euo pipefail
+        mhelm mirror "$DIR"
+        echo "lockfile=$GITHUB_WORKSPACE/$DIR/chart-lock.json" >> "$GITHUB_OUTPUT"
+        echo "mirror-values=$GITHUB_WORKSPACE/$DIR/mirror-values.yaml" >> "$GITHUB_OUTPUT"
+
+    - name: mhelm provenance
+      id: provenance
+      if: inputs.command == 'mirror' && inputs.sign == 'true'
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      env:
+        DIR: ${{ inputs.dir }}
+      run: |
+        set -euo pipefail
+        mhelm provenance "$DIR"
+        echo "path=$GITHUB_WORKSPACE/$DIR/mirror-provenance.json" >> "$GITHUB_OUTPUT"
+
+    - name: mhelm slsa
+      if: inputs.command == 'mirror' && inputs.sign == 'true'
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      env:
+        DIR: ${{ inputs.dir }}
+      run: |
+        set -euo pipefail
+        mhelm slsa "$DIR"
+
+    - name: Forward upstream cosign attestations
+      if: inputs.command == 'mirror' && inputs.sign == 'true' && inputs.copy-upstream-attestations == 'true'
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      env:
+        DIR: ${{ inputs.dir }}
+        COSIGN_YES: 'true'
+      run: |
+        set -euo pipefail
+        # Copy upstream signatures + attestations into the downstream registry
+        # so consumers can verify both the publisher AND mhelm. Most upstreams
+        # don't publish attestations yet — those rows log a notice and continue.
+        mhelm refs --with-upstream "$DIR" | while IFS=$'\t' read -r UPSTREAM DOWNSTREAM; do
+          [ -z "${UPSTREAM:-}" ] || [ -z "${DOWNSTREAM:-}" ] && continue
+          echo "::group::forward $UPSTREAM"
+          if cosign copy --force "$UPSTREAM" "$DOWNSTREAM" 2>&1; then
+            echo "  forwarded to $DOWNSTREAM"
+          else
+            echo "  (no upstream attestations on $UPSTREAM — nothing to forward)"
+          fi
+          echo "::endgroup::"
+        done
+
+    - name: Sign + attest every downstream artifact
+      if: inputs.command == 'mirror' && inputs.sign == 'true'
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      env:
+        DIR: ${{ inputs.dir }}
+        COSIGN_YES: 'true'
+      run: |
+        set -euo pipefail
+        SBOM="$RUNNER_TEMP/sbom.json"
+        VULN="$RUNNER_TEMP/vuln.json"
+        MIRROR_PROV="$DIR/mirror-provenance.json"
+        SLSA_PROV="$DIR/slsa-provenance.json"
+
+        mhelm refs "$DIR" | while read -r REF; do
+          [ -z "$REF" ] && continue
+          echo "::group::$REF"
+
+          # 1. Keyless cosign signature (Fulcio cert + Rekor log via ambient OIDC).
+          cosign sign --yes "$REF"
+
+          # 2. SBOM (CycloneDX) → cosign attest.
+          syft "$REF" -o "cyclonedx-json=$SBOM"
+          cosign attest --yes --predicate "$SBOM" --type cyclonedx "$REF"
+
+          # 3. Vulnerability report in cosign vuln/v1 schema (grype's native output).
+          grype "sbom:$SBOM" -o cosign-vuln --file "$VULN"
+          cosign attest --yes --predicate "$VULN" --type vuln "$REF"
+
+          # 4. SLSA v1 build provenance.
+          cosign attest --yes --predicate "$SLSA_PROV" --type slsaprovenance1 "$REF"
+
+          # 5. Custom MirrorProvenance predicate.
+          cosign attest --yes \
+            --predicate "$MIRROR_PROV" \
+            --type "https://mhelm.dev/MirrorProvenance/v1" \
+            "$REF"
+
+          echo "::endgroup::"
+        done
+
+        rm -f "$SBOM" "$VULN"
+
+    - name: mhelm drift
+      if: inputs.command == 'drift'
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      env:
+        DIR: ${{ inputs.dir }}
+        EXIT_ZERO: ${{ inputs.drift-exit-zero }}
+      run: |
+        set -euo pipefail
+        if [ "$EXIT_ZERO" = "true" ]; then
+          mhelm drift --exit-zero "$DIR"
+        else
+          mhelm drift "$DIR"
+        fi

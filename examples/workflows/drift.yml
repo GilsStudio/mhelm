@@ -1,0 +1,65 @@
+# Scheduled drift check across every chart.json in the platform repo.
+#
+# For each chart, runs `mhelm drift` (read-only) and commits the updated
+# chart-lock.json#drift section. Reviewers see the drift findings in the
+# auto-opened PR.
+#
+# Drift modes detected:
+#   - upstream-rotation     upstream re-published different bytes under the
+#                           same pinned ref (supply-chain incident).
+#   - downstream-tampered   downstream registry digest no longer matches what
+#                           we mirrored (registry compromise / overwrite).
+#   - new-version-available a higher semver is available upstream
+#                           (operational signal — time to bump
+#                           chart.json#upstream.version).
+
+name: Drift check
+
+on:
+  schedule:
+    - cron: '17 4 * * *'   # daily at 04:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  detect-drift:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        chart:
+          - platform/cert-manager
+          - platform/cilium
+          - platform/rook-ceph
+          - platform/rook-ceph-cluster
+          - platform/argocd
+          - platform/cnpg
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: mhelm drift
+        uses: gilsstudio/mhelm@v1
+        with:
+          dir: ${{ matrix.chart }}
+          command: drift
+          # Don't fail the job — open a PR with the drift findings instead.
+          drift-exit-zero: 'true'
+
+      - name: Open PR if drift detected
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: drift/${{ matrix.chart }}
+          title: 'drift: ${{ matrix.chart }}'
+          commit-message: 'chore(drift): record findings for ${{ matrix.chart }}'
+          add-paths: |
+            ${{ matrix.chart }}/chart-lock.json
+          body: |
+            Automated drift check detected changes for `${{ matrix.chart }}`.
+
+            See `chart-lock.json#drift` for the structured findings:
+              - `upstream-rotation` — pinned upstream bytes changed under the same ref.
+              - `downstream-tampered` — downstream registry digest differs from the mirror.
+              - `new-version-available` — higher semver is available upstream.

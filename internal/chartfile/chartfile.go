@@ -32,6 +32,20 @@ type File struct {
 	// They are mirrored alongside auto-discovered images and, when ValuesPath is
 	// set, rewritten into mirror-values.yaml.
 	ExtraImages []ExtraImage `json:"extraImages,omitempty"`
+	// TrustedIdentities is an optional allowlist of cosign keyless signing
+	// identities. When set, `mhelm verify` accepts only signatures whose
+	// SubjectRegex + Issuer match an entry; mismatches are recorded as
+	// unverified and (with --strict) cause exit non-zero.
+	TrustedIdentities []TrustedIdentity `json:"trustedIdentities,omitempty"`
+}
+
+// TrustedIdentity describes one allowed signing identity for cosign
+// keyless verification. SubjectRegex matches against the Fulcio cert's
+// SAN (typically a GitHub Actions workflow URL); Issuer is the OIDC
+// issuer URL (e.g. https://token.actions.githubusercontent.com).
+type TrustedIdentity struct {
+	SubjectRegex string `json:"subjectRegex"`
+	Issuer       string `json:"issuer"`
 }
 
 // ExtraImage is a manual entry the user adds when discover misses an image

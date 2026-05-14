@@ -30,6 +30,7 @@ type Image struct {
 	ValuesPaths      []ValuesPath `json:"valuesPaths,omitempty"`
 	DownstreamRef    string       `json:"downstreamRef,omitempty"`
 	DownstreamDigest string       `json:"downstreamDigest,omitempty"`
+	Signature        *Signature   `json:"signature,omitempty"`
 }
 
 // Source labels record *how* an image was discovered. Used by reviewers to
@@ -61,10 +62,30 @@ type Chart struct {
 }
 
 type Upstream struct {
-	Type               string `json:"type"`
-	URL                string `json:"url"`
-	ChartContentDigest string `json:"chartContentDigest"`
-	OCIManifestDigest  string `json:"ociManifestDigest,omitempty"`
+	Type               string     `json:"type"`
+	URL                string     `json:"url"`
+	ChartContentDigest string     `json:"chartContentDigest"`
+	OCIManifestDigest  string     `json:"ociManifestDigest,omitempty"`
+	Signature          *Signature `json:"signature,omitempty"`
+}
+
+// Signature records the result of an upstream-signature verification
+// attempt. Written by `mhelm verify`.
+type Signature struct {
+	// Verified is true only when a signature exists AND the verification
+	// path (cert chain + Rekor entry) succeeded. False covers both
+	// "not signed" and "signed but verification failed" — Type and Error
+	// disambiguate.
+	Verified bool `json:"verified"`
+	// Type: "cosign-keyless" | "cosign-key" | "none" | "error".
+	Type string `json:"type"`
+	// Subject / Issuer: the OIDC identity from the Fulcio cert (keyless).
+	Subject string `json:"subject,omitempty"`
+	Issuer  string `json:"issuer,omitempty"`
+	// RekorLogIndex: transparency log entry index for audit.
+	RekorLogIndex int64 `json:"rekorLogIndex,omitempty"`
+	// Error: non-empty when Type == "error".
+	Error string `json:"error,omitempty"`
 }
 
 type Downstream struct {

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/gilsstudio/mhelm/internal/chartfile"
+	"github.com/gilsstudio/mhelm/internal/insecure"
 	"github.com/gilsstudio/mhelm/internal/lockfile"
 	"helm.sh/helm/v3/pkg/cli"
 	"helm.sh/helm/v3/pkg/getter"
@@ -91,9 +92,11 @@ func pullFromRepo(ep chartfile.Endpoint) ([]byte, error) {
 
 func pullFromOCI(ep chartfile.Endpoint) ([]byte, string, error) {
 	settings := cli.New()
-	client, err := registry.NewClient(
-		registry.ClientOptCredentialsFile(settings.RegistryConfig),
-	)
+	opts := []registry.ClientOption{registry.ClientOptCredentialsFile(settings.RegistryConfig)}
+	if insecure.Enabled() {
+		opts = append(opts, registry.ClientOptPlainHTTP())
+	}
+	client, err := registry.NewClient(opts...)
 	if err != nil {
 		return nil, "", fmt.Errorf("registry client: %w", err)
 	}

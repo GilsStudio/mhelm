@@ -10,6 +10,7 @@ import (
 
 	"github.com/gilsstudio/mhelm/internal/chartfile"
 	"github.com/gilsstudio/mhelm/internal/chartpull"
+	"github.com/gilsstudio/mhelm/internal/insecure"
 	"github.com/gilsstudio/mhelm/internal/lockfile"
 	"helm.sh/helm/v3/pkg/chart/loader"
 	"helm.sh/helm/v3/pkg/cli"
@@ -46,9 +47,11 @@ func Run(ctx context.Context, cf chartfile.File) (Result, error) {
 	res.ChartVersion = meta.Version
 
 	settings := cli.New()
-	client, err := registry.NewClient(
-		registry.ClientOptCredentialsFile(settings.RegistryConfig),
-	)
+	opts := []registry.ClientOption{registry.ClientOptCredentialsFile(settings.RegistryConfig)}
+	if insecure.Enabled() {
+		opts = append(opts, registry.ClientOptPlainHTTP())
+	}
+	client, err := registry.NewClient(opts...)
 	if err != nil {
 		return res, fmt.Errorf("registry client: %w", err)
 	}

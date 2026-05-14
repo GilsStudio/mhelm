@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gilsstudio/mhelm/internal/chartfile"
+	"github.com/gilsstudio/mhelm/internal/imagemirror"
 	"github.com/gilsstudio/mhelm/internal/lockfile"
 	"github.com/gilsstudio/mhelm/internal/mirror"
 	"github.com/spf13/cobra"
@@ -15,12 +17,16 @@ import (
 
 var mirrorCmd = &cobra.Command{
 	Use:   "mirror [dir]",
-	Short: "Mirror the chart described in <dir>/chart.json to the downstream OCI registry",
+	Short: "Mirror the chart described in <dir>/chart.json — chart + every image — to the downstream OCI registry",
 	Long: `Read <dir>/chart.json, pull the upstream chart, push it to the downstream
-OCI registry, and write <dir>/chart-lock.json with the pinned digests.
+OCI registry, then crane-copy every image listed in <dir>/chart-lock.json#images
+(populated by a prior 'mhelm discover' run) to that same registry.
 
-If <dir>/chart-lock.json already exists (e.g. produced by a prior
-'mhelm discover' run), the images section is preserved.`,
+Images are mirrored concurrently and idempotently: a destination whose digest
+already matches the lockfile's pinned upstream digest is skipped.
+
+The lockfile is updated in place with the downstream chart digest and per-image
+downstream refs and digests.`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		dir := "."
@@ -37,16 +43,46 @@ If <dir>/chart-lock.json already exists (e.g. produced by a prior
 		if err := cf.Validate(); err != nil {
 			return err
 		}
-		res, err := mirror.Run(cmd.Context(), cf)
-		if err != nil {
-			return err
-		}
 
-		// Preserve fields owned by other commands (notably Images set by discover).
+		// Read existing lockfile so we can preserve discover's images section
+		// and merge mirror's results into per-image entries.
 		lf, err := lockfile.Read(lockPath)
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("read %s: %w", lockPath, err)
 		}
+
+		// 1. Push the chart.
+		res, err := mirror.Run(cmd.Context(), cf)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "mirrored chart %s:%s → %s\n", res.ChartName, res.ChartVersion, res.DownstreamRef)
+
+		// 2. Mirror every image in lockfile.images[].
+		mirrorPrefix := strings.TrimPrefix(cf.Downstream.URL, "oci://")
+		inputs := make([]imagemirror.Input, len(lf.Images))
+		for i, img := range lf.Images {
+			inputs[i] = imagemirror.Input{UpstreamRef: img.Ref, UpstreamDigest: img.Digest}
+		}
+		imgResults := imagemirror.Mirror(cmd.Context(), inputs, mirrorPrefix)
+
+		var failures int
+		for i, r := range imgResults {
+			if r.Err != nil {
+				failures++
+				fmt.Fprintf(cmd.OutOrStdout(), "  [FAIL] %s: %v\n", r.UpstreamRef, r.Err)
+				continue
+			}
+			lf.Images[i].DownstreamRef = r.DownstreamRef
+			lf.Images[i].DownstreamDigest = r.DownstreamDigest
+			status := "copied"
+			if r.Skipped {
+				status = "skipped"
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "  [%s] %s → %s\n", status, r.UpstreamRef, r.DownstreamRef)
+		}
+
+		// 3. Write the merged lockfile.
 		lf.SchemaVersion = lockfile.SchemaVersion
 		lf.Chart = lockfile.Chart{Name: res.ChartName, Version: res.ChartVersion}
 		lf.Upstream = lockfile.Upstream{
@@ -68,10 +104,10 @@ If <dir>/chart-lock.json already exists (e.g. produced by a prior
 			return fmt.Errorf("write lockfile %s: %w", lockPath, err)
 		}
 
-		fmt.Fprintf(cmd.OutOrStdout(), "mirrored chart %s:%s → %s\n", res.ChartName, res.ChartVersion, res.DownstreamRef)
-		fmt.Fprintf(cmd.OutOrStdout(), "  chart digest: %s\n", res.ChartContentDigest)
-		fmt.Fprintf(cmd.OutOrStdout(), "  downstream:   %s\n", res.DownstreamManifestDigest)
-		fmt.Fprintf(cmd.OutOrStdout(), "  lockfile:     %s\n", lockPath)
+		fmt.Fprintf(cmd.OutOrStdout(), "lockfile: %s\n", lockPath)
+		if failures > 0 {
+			return fmt.Errorf("%d image(s) failed to mirror", failures)
+		}
 		return nil
 	},
 }

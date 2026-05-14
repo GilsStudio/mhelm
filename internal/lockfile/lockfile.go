@@ -22,12 +22,14 @@ type File struct {
 }
 
 // Image is a container image referenced by the chart's rendered manifests.
-// Discovered by `mhelm discover`; mirrored in later phases.
+// Discovered by `mhelm discover`; mirrored by `mhelm mirror`.
 type Image struct {
-	Ref         string       `json:"ref"`
-	Digest      string       `json:"digest,omitempty"`
-	Source      string       `json:"source,omitempty"` // one of the Source* constants
-	ValuesPaths []ValuesPath `json:"valuesPaths,omitempty"`
+	Ref              string       `json:"ref"`
+	Digest           string       `json:"digest,omitempty"`
+	Source           string       `json:"source,omitempty"` // one of the Source* constants
+	ValuesPaths      []ValuesPath `json:"valuesPaths,omitempty"`
+	DownstreamRef    string       `json:"downstreamRef,omitempty"`
+	DownstreamDigest string       `json:"downstreamDigest,omitempty"`
 }
 
 // Source labels record *how* an image was discovered. Used by reviewers to

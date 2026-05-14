@@ -51,5 +51,12 @@
     "extraManifests": [
       "k8s/l2-announcement-policy.yml"
     ]
+  },
+  "release": {
+    "name":      "cilium",
+    "namespace": "kube-system",
+    "valuesFiles": [
+      "helm/install-overrides.yml"
+    ]
   }
 }

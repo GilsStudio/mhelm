@@ -36,9 +36,10 @@ type Endpoint struct {
 // APIVersion = mhelm.io/v1alpha1 after Load; v0.1.0 inputs are
 // transparently migrated.
 type File struct {
-	APIVersion string `json:"apiVersion"`
-	Mirror     Mirror `json:"mirror"`
-	Wrap       *Wrap  `json:"wrap,omitempty"`
+	APIVersion string   `json:"apiVersion"`
+	Mirror     Mirror   `json:"mirror"`
+	Wrap       *Wrap    `json:"wrap,omitempty"`
+	Release    *Release `json:"release,omitempty"`
 }
 
 // Mirror owns transport: upstream identity, downstream destination,
@@ -110,6 +111,17 @@ type ExtraImage struct {
 	Ref        string `json:"ref"`
 	ValuesPath string `json:"valuesPath,omitempty"`
 	Reason     string `json:"reason,omitempty"`
+}
+
+// Release is the deploy-time ergonomics surface — used by
+// `mhelm release print-install` to assemble a `helm upgrade --install`
+// invocation against the locked wrapper (or bare mirror chart, when no
+// wrap is configured). Single-environment by design; multi-env is
+// delegated to helmfile/argo/etc.
+type Release struct {
+	Name        string   `json:"name,omitempty"`
+	Namespace   string   `json:"namespace,omitempty"`
+	ValuesFiles []string `json:"valuesFiles,omitempty"`
 }
 
 // Wrap is the composition surface — used by `mhelm wrap` to author a
@@ -253,6 +265,14 @@ func (f File) Validate() error {
 		}
 		if f.Wrap.Version == "" {
 			return fmt.Errorf("wrap.version is required when wrap is configured")
+		}
+	}
+	if f.Release != nil {
+		if f.Release.Name == "" {
+			return fmt.Errorf("release.name is required when release is configured")
+		}
+		if f.Release.Namespace == "" {
+			return fmt.Errorf("release.namespace is required when release is configured")
 		}
 	}
 	if f.Mirror.VulnPolicy != nil {

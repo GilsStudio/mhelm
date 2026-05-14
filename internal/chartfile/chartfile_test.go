@@ -247,6 +247,34 @@ func TestDiscoveryValuesEffective_NoFallback(t *testing.T) {
 	}
 }
 
+// TestValidate_ReleaseRequiresNameAndNamespace locks in the v0.4.0
+// rule: a non-nil release section must carry both fields.
+func TestValidate_ReleaseRequiresNameAndNamespace(t *testing.T) {
+	t.Run("name-missing", func(t *testing.T) {
+		f := validRepoFile()
+		f.Release = &Release{Namespace: "kube-system"}
+		err := f.Validate()
+		if err == nil || !strings.Contains(err.Error(), "release.name") {
+			t.Errorf("Validate() = %v, want release.name error", err)
+		}
+	})
+	t.Run("namespace-missing", func(t *testing.T) {
+		f := validRepoFile()
+		f.Release = &Release{Name: "cilium"}
+		err := f.Validate()
+		if err == nil || !strings.Contains(err.Error(), "release.namespace") {
+			t.Errorf("Validate() = %v, want release.namespace error", err)
+		}
+	})
+	t.Run("both-present-ok", func(t *testing.T) {
+		f := validRepoFile()
+		f.Release = &Release{Name: "cilium", Namespace: "kube-system", ValuesFiles: []string{"x.yml"}}
+		if err := f.Validate(); err != nil {
+			t.Errorf("Validate() = %v, want nil", err)
+		}
+	})
+}
+
 // TestValidate_WrapRequiresNameAndVersion locks in the v0.3.0 rule:
 // a non-nil wrap section must carry both wrap.name and wrap.version.
 func TestValidate_WrapRequiresNameAndVersion(t *testing.T) {

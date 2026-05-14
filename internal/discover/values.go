@@ -4,20 +4,15 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/gilsstudio/mhelm/internal/imagevalues"
 	"github.com/google/go-containerregistry/pkg/name"
 )
 
-// imageCandidate is one (values-path → constructed image reference) tuple
-// produced by walking the chart's merged values. It carries the original
-// node so mirror-values rewriting can preserve the source structure.
-type imageCandidate struct {
-	Path string
-	Ref  string
-
-	// Exactly one of these is set:
-	StringForm string                 // for `image: "<ref>"` form
-	ObjectForm map[string]interface{} // for `image: {registry, repository, tag, digest}` form
-}
+// imageCandidate is one (values-path → image-ref) tuple produced by
+// walking the chart's merged values. Alias for imagevalues.Candidate
+// so the rewrite logic in package imagevalues can consume our matches
+// directly.
+type imageCandidate = imagevalues.Candidate
 
 // findImageCandidates walks merged values for every `image:` key whose value
 // is either a non-empty string or a map containing `repository`. The walk is

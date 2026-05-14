@@ -19,6 +19,7 @@ const APIVersion = "mhelm.io/v1alpha1"
 type File struct {
 	APIVersion string      `json:"apiVersion"`
 	Mirror     MirrorBlock `json:"mirror"`
+	Wrap       *WrapBlock  `json:"wrap,omitempty"`
 	Drift      *Drift      `json:"drift,omitempty"`
 }
 
@@ -33,6 +34,35 @@ type MirrorBlock struct {
 	Tool       string     `json:"tool"`
 	Version    string     `json:"version"`
 	Timestamp  time.Time  `json:"timestamp"`
+}
+
+// WrapBlock records the output of `mhelm wrap` — the wrapper chart's
+// identity, the mirrored upstream it depends on, and the canonical
+// repository paths it would deploy to the cluster.
+type WrapBlock struct {
+	Chart          WrapChart `json:"chart"`
+	DependsOn      WrapDep   `json:"dependsOn"`
+	DeployedImages []string  `json:"deployedImages,omitempty"`
+	Tool           string    `json:"tool"`
+	Version        string    `json:"version"`
+	Timestamp      time.Time `json:"timestamp"`
+}
+
+// WrapChart identifies the wrapper artifact mhelm authored + pushed.
+type WrapChart struct {
+	Name               string `json:"name"`
+	Version            string `json:"version"`
+	Ref                string `json:"ref"`
+	OCIManifestDigest  string `json:"ociManifestDigest,omitempty"`
+	ChartContentDigest string `json:"chartContentDigest,omitempty"`
+}
+
+// WrapDep is the mirrored upstream the wrapper depends on. Distinct
+// from MirrorBlock.Downstream so verifiers can resolve the dependency
+// graph from the lockfile alone.
+type WrapDep struct {
+	Ref               string `json:"ref"`
+	OCIManifestDigest string `json:"ociManifestDigest,omitempty"`
 }
 
 // Drift captures the result of the most recent `mhelm drift` run.

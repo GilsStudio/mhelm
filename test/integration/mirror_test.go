@@ -13,6 +13,7 @@
 package integration
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -27,11 +28,13 @@ import (
 	"time"
 
 	"github.com/gilsstudio/mhelm/internal/chartfile"
+	"github.com/gilsstudio/mhelm/internal/chartpull"
 	"github.com/gilsstudio/mhelm/internal/discover"
 	"github.com/gilsstudio/mhelm/internal/drift"
 	"github.com/gilsstudio/mhelm/internal/imagemirror"
 	"github.com/gilsstudio/mhelm/internal/lockfile"
 	"github.com/gilsstudio/mhelm/internal/mirror"
+	"github.com/gilsstudio/mhelm/internal/wrap"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/google/go-containerregistry/pkg/crane"
@@ -139,6 +142,147 @@ func TestDiscoverMirrorDriftLoop(t *testing.T) {
 	); diff != "" {
 		t.Errorf("lockfile Images section not stable across runs (-first +second):\n%s", diff)
 	}
+}
+
+// TestWrapEndToEnd exercises the v0.3.0 wrap pipeline against the
+// local registry: discover + mirror, then wrap, then assert the
+// wrapper is pullable and its values.yaml carries digest-pinned
+// rewrites.
+func TestWrapEndToEnd(t *testing.T) {
+	t.Setenv("MHELM_INSECURE", "1")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	registryAddr := startRegistry(ctx, t)
+
+	upstreamRefs := []string{
+		registryAddr + "/upstream/app:1.0",
+		registryAddr + "/upstream/init:1.0",
+		registryAddr + "/upstream/configmap-image:1.0",
+		registryAddr + "/upstream/worker:1.0",
+		registryAddr + "/upstream/annotated:1.0",
+	}
+	for _, ref := range upstreamRefs {
+		pushSyntheticImage(t, ref)
+	}
+	tgz := packageFixtureChart(t, registryAddr)
+	repoURL := serveChartRepo(t, "tinychart-0.1.0.tgz", tgz)
+
+	workDir := t.TempDir()
+	cf := chartfile.File{
+		APIVersion: chartfile.APIVersion,
+		Mirror: chartfile.Mirror{
+			Upstream: chartfile.Endpoint{
+				Type: chartfile.TypeRepo, Name: "tinychart",
+				URL: repoURL, Version: "0.1.0",
+			},
+			Downstream: chartfile.Endpoint{
+				Type: chartfile.TypeOCI,
+				URL:  "oci://" + registryAddr + "/mirror",
+			},
+		},
+		Wrap: &chartfile.Wrap{
+			Name:    "tinychart-wrapped",
+			Version: "0.1.0-myorg.1",
+		},
+	}
+	writeChartJSON(t, filepath.Join(workDir, "chart.json"), cf)
+
+	// discover + mirror through the existing helper.
+	images, _ := runDiscoverMirror(ctx, t, cf, workDir)
+	if len(images) == 0 {
+		t.Fatal("expected images mirrored, got none")
+	}
+
+	// Now wrap.
+	lf := readLockfile(t, filepath.Join(workDir, "chart-lock.json"))
+	res, err := wrap.Run(ctx, cf, lf, workDir)
+	if err != nil {
+		t.Fatalf("wrap.Run: %v", err)
+	}
+
+	// Wrapper pullable from the registry.
+	if _, err := crane.Digest(res.DownstreamRef, crane.Insecure); err != nil {
+		t.Errorf("wrapper not pullable at %s: %v", res.DownstreamRef, err)
+	}
+
+	// Persist wrap block + reload.
+	block := res.ToLockfileBlock("test", time.Time{})
+	lf.Wrap = &block
+	if err := lockfile.Write(filepath.Join(workDir, "chart-lock.json"), lf); err != nil {
+		t.Fatalf("write lockfile: %v", err)
+	}
+	lf = readLockfile(t, filepath.Join(workDir, "chart-lock.json"))
+	if lf.Wrap == nil {
+		t.Fatal("lockfile.Wrap not persisted")
+	}
+	if lf.Wrap.Chart.Ref != res.DownstreamRef {
+		t.Errorf("lockfile.wrap.chart.ref = %q, want %q", lf.Wrap.Chart.Ref, res.DownstreamRef)
+	}
+	if len(lf.Wrap.DeployedImages) == 0 {
+		t.Error("lockfile.wrap.deployedImages empty")
+	}
+
+	// Pull the wrapper .tgz from the registry and inspect its
+	// values.yaml: every image with a valuesPath in the lockfile
+	// should be present in the wrapper's nested values.
+	tgzBytes, err := crane.PullLayer(res.DownstreamRef, crane.Insecure)
+	if err != nil {
+		// crane.PullLayer signature varies — fall back to crane.Pull.
+		_ = tgzBytes
+	}
+	// Simpler path: load via Helm SDK after re-pulling.
+	pullEp := chartfile.Endpoint{
+		Type:    chartfile.TypeOCI,
+		URL:     "oci://" + registryAddr + "/mirror/tinychart-wrapped",
+		Version: "0.1.0-myorg.1",
+	}
+	pulled, err := chartpullPull(ctx, pullEp)
+	if err != nil {
+		t.Fatalf("re-pull wrapper: %v", err)
+	}
+	wrapperChart, err := loader.LoadArchive(bytes.NewReader(pulled))
+	if err != nil {
+		t.Fatalf("load wrapper chart: %v", err)
+	}
+
+	// Wrapper has the dep declared.
+	if len(wrapperChart.Metadata.Dependencies) != 1 {
+		t.Fatalf("wrapper dependencies = %d, want 1", len(wrapperChart.Metadata.Dependencies))
+	}
+	if wrapperChart.Metadata.Dependencies[0].Name != "tinychart" {
+		t.Errorf("dep name = %q, want %q", wrapperChart.Metadata.Dependencies[0].Name, "tinychart")
+	}
+
+	// Wrapper values are nested under "tinychart" and carry rewrites.
+	depBlock, ok := wrapperChart.Values["tinychart"].(map[string]any)
+	if !ok {
+		t.Fatalf("wrapper values missing tinychart block: %#v", wrapperChart.Values)
+	}
+
+	// At least one rewrite must reference the mirror registry — either
+	// in a string image ref, or in the decomposed registry/repository
+	// fields.
+	yb, _ := yaml.Marshal(depBlock)
+	if !strings.Contains(string(yb), registryAddr) || !strings.Contains(string(yb), "mirror") {
+		t.Errorf("wrapper values do not reference the mirror registry:\n%s", yb)
+	}
+
+	// Digest-pinned: at least one rewrite must contain a sha256: digest.
+	if !strings.Contains(string(yb), "sha256:") {
+		t.Errorf("wrapper values are not digest-pinned:\n%s", yb)
+	}
+}
+
+// chartpullPull is a thin shim over chartpull.Pull that returns just
+// the bytes so the test stays terse.
+func chartpullPull(ctx context.Context, ep chartfile.Endpoint) ([]byte, error) {
+	r, err := chartpull.Pull(ctx, ep)
+	if err != nil {
+		return nil, err
+	}
+	return r.Bytes, nil
 }
 
 // runDiscoverMirror replicates the cmd/discover + cmd/mirror logic

@@ -65,6 +65,11 @@ upstream OCI artifact exists to copy from).`,
 			if r := digestForm(lf.Mirror.Downstream.Ref, lf.Mirror.Downstream.OCIManifestDigest); r != "" {
 				fmt.Fprintln(cmd.OutOrStdout(), r)
 			}
+			if lf.Wrap != nil {
+				if r := digestForm(lf.Wrap.Chart.Ref, lf.Wrap.Chart.OCIManifestDigest); r != "" {
+					fmt.Fprintln(cmd.OutOrStdout(), r)
+				}
+			}
 		}
 		if !refsChartOnly {
 			for _, img := range lf.Mirror.Images {

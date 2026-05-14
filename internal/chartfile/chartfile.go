@@ -112,15 +112,15 @@ type ExtraImage struct {
 	Reason     string `json:"reason,omitempty"`
 }
 
-// Wrap is the composition surface — used by `mhelm wrap` in v0.3.0 and
-// read by `mhelm discover` today to preserve v0.1.0 behavior
-// (discovery values + mirror-values.yaml generation).
+// Wrap is the composition surface — used by `mhelm wrap` to author a
+// wrapper Helm chart that depends on the mirrored upstream. Image
+// rewrites are NOT configured here in v0.3.0+ — `mhelm wrap` derives
+// them automatically from lockfile.mirror.images[].valuesPaths[].
 type Wrap struct {
-	Name           string            `json:"name,omitempty"`
-	Version        string            `json:"version,omitempty"`
-	ValuesFiles    []string          `json:"valuesFiles,omitempty"`
-	ImageOverrides map[string]string `json:"imageOverrides,omitempty"`
-	ExtraManifests []string          `json:"extraManifests,omitempty"`
+	Name           string   `json:"name,omitempty"`
+	Version        string   `json:"version,omitempty"`
+	ValuesFiles    []string `json:"valuesFiles,omitempty"`
+	ExtraManifests []string `json:"extraManifests,omitempty"`
 }
 
 // Load reads chart.json. v0.1.0 flat-shape files are migrated in
@@ -145,6 +145,7 @@ func Load(filePath string) (File, error) {
 		if err := json.Unmarshal(b, &f); err != nil {
 			return f, fmt.Errorf("parse %s: %w", filePath, err)
 		}
+		warnDeprecatedImageOverrides(filePath, b)
 		return f, nil
 	case "":
 		var legacy v01File
@@ -159,6 +160,29 @@ func Load(filePath string) (File, error) {
 		return f, fmt.Errorf("%s: unsupported apiVersion %q (expected %q or empty for v0.1.0 auto-migrate)",
 			filePath, head.APIVersion, APIVersion)
 	}
+}
+
+// warnDeprecatedImageOverrides surfaces a stderr warning when an
+// adopter still carries `wrap.imageOverrides` in their chart.json.
+// The field was parsed in v0.2.0 as a schema slot but is removed in
+// v0.3.0; rewrites are now auto-derived from
+// lockfile.mirror.images[].valuesPaths[].
+func warnDeprecatedImageOverrides(filePath string, raw []byte) {
+	var sniff struct {
+		Wrap struct {
+			ImageOverrides map[string]string `json:"imageOverrides"`
+		} `json:"wrap"`
+	}
+	if err := json.Unmarshal(raw, &sniff); err != nil {
+		return
+	}
+	if len(sniff.Wrap.ImageOverrides) == 0 {
+		return
+	}
+	fmt.Fprintf(os.Stderr,
+		"warn: %s carries `wrap.imageOverrides` — no longer used as of v0.3.0. "+
+			"Remove the field; rewrites are derived from lockfile.mirror.images[].valuesPaths[].\n",
+		filePath)
 }
 
 // v01File is the flat v0.1.0 chart.json shape. Kept only for the
@@ -223,6 +247,14 @@ func (f File) Validate() error {
 			return fmt.Errorf("mirror.extraImages[%d].ref is required", i)
 		}
 	}
+	if f.Wrap != nil {
+		if f.Wrap.Name == "" {
+			return fmt.Errorf("wrap.name is required when wrap is configured")
+		}
+		if f.Wrap.Version == "" {
+			return fmt.Errorf("wrap.version is required when wrap is configured")
+		}
+	}
 	if f.Mirror.VulnPolicy != nil {
 		switch f.Mirror.VulnPolicy.FailOn {
 		case "", FailOnCritical, FailOnHigh, FailOnMedium, FailOnNever:
@@ -260,15 +292,9 @@ func (f File) ChartName() string {
 }
 
 // DiscoveryValuesEffective returns the values files the discover
-// pipeline should render with. mirror.discoveryValues wins when set;
-// otherwise wrap.valuesFiles (the v0.2.0 bridge that goes away when
-// `mhelm wrap` lands in v0.3.0).
+// pipeline should render with. mirror.discoveryValues is the only
+// source as of v0.3.0; the v0.2.0 fallback to wrap.valuesFiles is
+// gone (wrap.valuesFiles is deployment overlay, not discovery input).
 func (f File) DiscoveryValuesEffective() []string {
-	if len(f.Mirror.DiscoveryValues) > 0 {
-		return f.Mirror.DiscoveryValues
-	}
-	if f.Wrap != nil {
-		return f.Wrap.ValuesFiles
-	}
-	return nil
+	return f.Mirror.DiscoveryValues
 }

@@ -21,7 +21,7 @@ var (
 const (
 	chartFileName            = "chart.json"
 	lockFileName             = "chart-lock.json"
-	mirrorValuesFileName     = "mirror-values.yaml"
+	imageValuesFileName      = "image-values.yaml"
 	mirrorProvenanceFileName = "mirror-provenance.json"
 	slsaProvenanceFileName   = "slsa-provenance.json"
 )

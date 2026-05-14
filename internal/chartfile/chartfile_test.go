@@ -235,10 +235,42 @@ func TestDiscoveryValuesEffective_PrefersMirror(t *testing.T) {
 	}
 }
 
-func TestDiscoveryValuesEffective_FallsBackToWrap(t *testing.T) {
-	f := File{Wrap: &Wrap{ValuesFiles: []string{"deploy.yml"}}}
+// TestDiscoveryValuesEffective_NoFallback locks in the v0.3.0 sunset:
+// wrap.valuesFiles is no longer a discovery input. Setting it without
+// mirror.discoveryValues yields an empty discovery list — `mhelm
+// discover` renders with chart defaults only.
+func TestDiscoveryValuesEffective_NoFallback(t *testing.T) {
+	f := File{Wrap: &Wrap{Name: "x", Version: "1", ValuesFiles: []string{"deploy.yml"}}}
 	got := f.DiscoveryValuesEffective()
-	if len(got) != 1 || got[0] != "deploy.yml" {
-		t.Errorf("got %v, want [deploy.yml]", got)
+	if len(got) != 0 {
+		t.Errorf("got %v, want empty (wrap.valuesFiles bridge sunset in v0.3.0)", got)
 	}
+}
+
+// TestValidate_WrapRequiresNameAndVersion locks in the v0.3.0 rule:
+// a non-nil wrap section must carry both wrap.name and wrap.version.
+func TestValidate_WrapRequiresNameAndVersion(t *testing.T) {
+	t.Run("name-missing", func(t *testing.T) {
+		f := validRepoFile()
+		f.Wrap = &Wrap{Version: "1.0"}
+		err := f.Validate()
+		if err == nil || !strings.Contains(err.Error(), "wrap.name") {
+			t.Errorf("Validate() = %v, want wrap.name error", err)
+		}
+	})
+	t.Run("version-missing", func(t *testing.T) {
+		f := validRepoFile()
+		f.Wrap = &Wrap{Name: "wrapper"}
+		err := f.Validate()
+		if err == nil || !strings.Contains(err.Error(), "wrap.version") {
+			t.Errorf("Validate() = %v, want wrap.version error", err)
+		}
+	})
+	t.Run("both-present-ok", func(t *testing.T) {
+		f := validRepoFile()
+		f.Wrap = &Wrap{Name: "wrapper", Version: "1.0"}
+		if err := f.Validate(); err != nil {
+			t.Errorf("Validate() = %v, want nil", err)
+		}
+	})
 }

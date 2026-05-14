@@ -130,6 +130,21 @@ runs:
         echo "lockfile=$GITHUB_WORKSPACE/$DIR/chart-lock.json" >> "$GITHUB_OUTPUT"
         echo "mirror-values=$GITHUB_WORKSPACE/$DIR/mirror-values.yaml" >> "$GITHUB_OUTPUT"
 
+    - name: mhelm wrap
+      if: inputs.command == 'mirror'
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      env:
+        DIR: ${{ inputs.dir }}
+      run: |
+        # No-op (exit 0) when chart.json has no wrap section, so this is
+        # always safe to invoke. When wrap is configured it authors a
+        # wrapper chart, runs the fail-safe check, packages, pushes the
+        # wrapper to the downstream registry, and writes lockfile.wrap.
+        # The wrapper ref is then included by `mhelm refs` and signed +
+        # attested in the same loop as the chart and images.
+        mhelm wrap "$DIR"
+
     - name: mhelm provenance
       id: provenance
       if: inputs.command == 'mirror' && inputs.sign == 'true'

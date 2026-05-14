@@ -43,8 +43,13 @@
     }
   },
   "wrap": {
+    "name":    "cilium-wrapped",
+    "version": "1.19.3-myorg.1",
     "valuesFiles": [
       "values.yml"
+    ],
+    "extraManifests": [
+      "k8s/l2-announcement-policy.yml"
     ]
   }
 }

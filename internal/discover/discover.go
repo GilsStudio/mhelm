@@ -18,6 +18,7 @@ import (
 
 	"github.com/gilsstudio/mhelm/internal/chartfile"
 	"github.com/gilsstudio/mhelm/internal/chartpull"
+	"github.com/gilsstudio/mhelm/internal/imagevalues"
 	"github.com/gilsstudio/mhelm/internal/lockfile"
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
@@ -149,8 +150,46 @@ func Run(ctx context.Context, cf chartfile.File, baseDir string) (Result, error)
 		}
 	}
 
-	res.MirrorValues = buildMirrorValues(matches, cf.Mirror.ExtraImages, merged, cf.Mirror.Downstream.URL)
+	res.MirrorValues = imagevalues.BuildTagBased(matches, cf.Mirror.ExtraImages, merged, cf.Mirror.Downstream.URL)
 	return res, nil
+}
+
+// FindRenderedImages renders chart c with valuesFiles overlaid on
+// chart defaults and returns the deduped canonical repo paths of every
+// image declared as a container in the rendered manifests, plus the
+// merged values map (useful for shape inference).
+//
+// Only the high-confidence containers walker is used here — env /
+// ConfigMap data / CRD-spec extractors rely on registry validation in
+// Run to filter heuristic false positives, and `mhelm wrap`'s
+// fail-safe pass runs offline so those extractors would over-trigger
+// on innocuous strings (e.g. an apiVersion like `example.test/v1`).
+//
+// Unlike Run, this does NOT validate refs against a live registry —
+// it is intended for callers that compare against an already-pinned
+// source like chart-lock.json.
+func FindRenderedImages(c *chart.Chart, valuesFiles []string, baseDir string) ([]string, map[string]any, error) {
+	rendered, merged, err := renderChart(c, valuesFiles, baseDir)
+	if err != nil {
+		return nil, nil, err
+	}
+	docs := parseDocs(rendered)
+	seen := map[string]bool{}
+	var refs []string
+	add := func(ref string) {
+		c := canonicalRepo(ref)
+		if c == "" || seen[c] {
+			return
+		}
+		seen[c] = true
+		refs = append(refs, c)
+	}
+	for _, doc := range docs {
+		for _, cand := range extractFromContainers(doc) {
+			add(cand.Ref)
+		}
+	}
+	return refs, merged, nil
 }
 
 // renderChart returns the rendered template output and the merged Values

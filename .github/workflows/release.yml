@@ -1,0 +1,56 @@
+name: release
+
+# Runs on every tag push matching v* (e.g. v1.2.3, v1.2.3-rc.1).
+# Also supports `workflow_dispatch` so a flaky workflow run for an
+# existing tag can be re-triggered without rewriting the tag.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to (re-)release (e.g. v1.2.3)"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test
+    uses: ./.github/workflows/test.yml
+    permissions:
+      contents: read
+
+  release:
+    name: release
+    needs: [test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the GitHub Release
+      id-token: write # cosign keyless via the GHA OIDC token
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # On workflow_dispatch, check out the supplied tag; on push, the
+          # ref already points at the tag.
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: latest
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

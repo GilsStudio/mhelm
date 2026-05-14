@@ -1,0 +1,73 @@
+version: 2
+
+project_name: mhelm
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: mhelm
+    main: .
+    binary: mhelm
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X github.com/gilsstudio/mhelm/cmd.Version={{ .Version }}
+
+archives:
+  - id: mhelm
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    formats: [tar.gz]
+    files:
+      - LICENSE*
+      - README*
+
+checksum:
+  name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
+  algorithm: sha256
+
+# Cosign keyless signing of the checksum file. The release workflow
+# requests an OIDC token (`id-token: write`) so cosign can mint a
+# Fulcio cert and log the signature in Rekor — the same trust path
+# mhelm itself attests with.
+signs:
+  - id: checksums
+    cmd: cosign
+    args:
+      - sign-blob
+      - "--yes"
+      - "--output-signature=${signature}"
+      - "${artifact}"
+    artifacts: checksum
+    signature: "${artifact}.sig"
+    output: true
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "Merge pull request"
+      - "Merge branch"
+
+release:
+  draft: false
+  prerelease: auto
+  mode: replace
+  name_template: "{{ .Tag }}"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot+{{ .ShortCommit }}"

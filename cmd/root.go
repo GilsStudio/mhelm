@@ -20,6 +20,7 @@ func init() {
 	rootCmd.AddCommand(provenanceCmd)
 	rootCmd.AddCommand(slsaCmd)
 	rootCmd.AddCommand(refsCmd)
+	rootCmd.AddCommand(driftCmd)
 }
 
 func Execute() error {

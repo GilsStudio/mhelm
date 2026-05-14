@@ -19,7 +19,31 @@ type File struct {
 	Downstream    Downstream `json:"downstream"`
 	Images        []Image    `json:"images,omitempty"`
 	Mirror        Mirror     `json:"mirror"`
+	Drift         *Drift     `json:"drift,omitempty"`
 }
+
+// Drift captures the result of the most recent `mhelm drift` run.
+// Replaced wholesale on each run so the lockfile diff is the audit.
+type Drift struct {
+	CheckedAt time.Time      `json:"checkedAt"`
+	Findings  []DriftFinding `json:"findings,omitempty"`
+}
+
+// DriftFinding is one drift signal. Kind is one of the DriftKind* constants.
+type DriftFinding struct {
+	Kind     string `json:"kind"`
+	Subject  string `json:"subject"`
+	Expected string `json:"expected,omitempty"`
+	Actual   string `json:"actual,omitempty"`
+	Note     string `json:"note,omitempty"`
+}
+
+const (
+	DriftKindUpstreamRotation    = "upstream-rotation"    // upstream now publishes different bytes under the same ref
+	DriftKindDownstreamTampered  = "downstream-tampered"  // downstream digest no longer matches what we mirrored
+	DriftKindNewVersionAvailable = "new-version-available"
+	DriftKindUpstreamMissing     = "upstream-missing" // the pinned upstream entry no longer exists
+)
 
 // Image is a container image referenced by the chart's rendered manifests.
 // Discovered by `mhelm discover`; mirrored by `mhelm mirror`.

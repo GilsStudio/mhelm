@@ -17,6 +17,9 @@ func init() {
 	rootCmd.AddCommand(discoverCmd)
 	rootCmd.AddCommand(verifyCmd)
 	rootCmd.AddCommand(mirrorCmd)
+	rootCmd.AddCommand(provenanceCmd)
+	rootCmd.AddCommand(slsaCmd)
+	rootCmd.AddCommand(refsCmd)
 }
 
 func Execute() error {

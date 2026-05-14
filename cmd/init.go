@@ -19,9 +19,11 @@ var (
 )
 
 const (
-	chartFileName        = "chart.json"
-	lockFileName         = "chart-lock.json"
-	mirrorValuesFileName = "mirror-values.yaml"
+	chartFileName            = "chart.json"
+	lockFileName             = "chart-lock.json"
+	mirrorValuesFileName     = "mirror-values.yaml"
+	mirrorProvenanceFileName = "mirror-provenance.json"
+	slsaProvenanceFileName   = "slsa-provenance.json"
 )
 
 var initCmd = &cobra.Command{

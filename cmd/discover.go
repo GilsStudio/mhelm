@@ -53,19 +53,21 @@ Network reads only — no pushes, no signing.`,
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("read %s: %w", lockPath, err)
 		}
-		lf.SchemaVersion = lockfile.SchemaVersion
-		lf.Chart = lockfile.Chart{Name: res.ChartName, Version: res.ChartVersion}
-		lf.Upstream.Type = cf.Upstream.Type
-		lf.Upstream.URL = cf.Upstream.URL
-		lf.Upstream.ChartContentDigest = res.ChartContentDigest
+		lf.APIVersion = lockfile.APIVersion
+		lf.Mirror.Chart = lockfile.Chart{Name: res.ChartName, Version: res.ChartVersion}
+		lf.Mirror.Upstream.Type = cf.Mirror.Upstream.Type
+		lf.Mirror.Upstream.URL = cf.Mirror.Upstream.URL
+		lf.Mirror.Upstream.ChartContentDigest = res.ChartContentDigest
 		if res.UpstreamManifestDigest != "" {
-			lf.Upstream.OCIManifestDigest = res.UpstreamManifestDigest
+			lf.Mirror.Upstream.OCIManifestDigest = res.UpstreamManifestDigest
 		}
-		lf.Images = res.Images
-		// Mirror section stays as-is if previously set; otherwise stamp discover metadata
-		// so the lockfile is self-describing about who produced the image list.
+		lf.Mirror.Images = res.Images
+		// Stamp discover metadata when no prior mirror run has — keeps the
+		// lockfile self-describing about who produced the image list.
 		if lf.Mirror.Tool == "" {
-			lf.Mirror = lockfile.Mirror{Tool: "mhelm discover", Version: Version, Timestamp: time.Now().UTC()}
+			lf.Mirror.Tool = "mhelm discover"
+			lf.Mirror.Version = Version
+			lf.Mirror.Timestamp = time.Now().UTC()
 		}
 
 		if err := lockfile.Write(lockPath, lf); err != nil {

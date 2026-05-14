@@ -129,42 +129,43 @@ func buildGoldenFile() File {
 	ts := time.Date(2026, 5, 14, 0, 0, 0, 0, time.UTC)
 	checked := time.Date(2026, 5, 14, 1, 0, 0, 0, time.UTC)
 	return File{
-		SchemaVersion: SchemaVersion,
-		Chart:         Chart{Name: "tinychart", Version: "0.1.0"},
-		Upstream: Upstream{
-			Type:               "repo",
-			URL:                "https://example.com/charts",
-			ChartContentDigest: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-			OCIManifestDigest:  "sha256:deadbeef00000000000000000000000000000000000000000000000000000000",
-			Signature: &Signature{
-				Verified:      true,
-				Type:          "cosign-keyless",
-				Subject:       "https://github.com/org/repo/.github/workflows/release.yml@refs/heads/main",
-				Issuer:        "https://token.actions.githubusercontent.com",
-				RekorLogIndex: 12345,
-			},
-		},
-		Downstream: Downstream{
-			Ref:               "ghcr.io/mirror/tinychart:0.1.0",
-			OCIManifestDigest: "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-		},
-		Images: []Image{
-			{
-				Ref:    "registry.io/app:1",
-				Digest: "sha256:2222222222222222222222222222222222222222222222222222222222222222",
-				Source: SourceManifest,
-				ValuesPaths: []ValuesPath{
-					{Path: "image", Accuracy: AccuracyHeuristic},
-				},
-				DownstreamRef:    "ghcr.io/mirror/app:1",
-				DownstreamDigest: "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+		APIVersion: APIVersion,
+		Mirror: MirrorBlock{
+			Chart: Chart{Name: "tinychart", Version: "0.1.0"},
+			Upstream: Upstream{
+				Type:               "repo",
+				URL:                "https://example.com/charts",
+				ChartContentDigest: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+				OCIManifestDigest:  "sha256:deadbeef00000000000000000000000000000000000000000000000000000000",
 				Signature: &Signature{
-					Verified: false,
-					Type:     "none",
+					Verified:      true,
+					Type:          "cosign-keyless",
+					Subject:       "https://github.com/org/repo/.github/workflows/release.yml@refs/heads/main",
+					Issuer:        "https://token.actions.githubusercontent.com",
+					RekorLogIndex: 12345,
 				},
 			},
-		},
-		Mirror: Mirror{
+			Downstream: Downstream{
+				Ref:               "ghcr.io/mirror/tinychart:0.1.0",
+				OCIManifestDigest: "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+			},
+			Images: []Image{
+				{
+					Ref:           "registry.io/app:1",
+					Digest:        "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+					Source:        SourceManifest,
+					DiscoveredVia: DiscoveredViaDiscoveryValues,
+					ValuesPaths: []ValuesPath{
+						{Path: "image", Accuracy: AccuracyHeuristic},
+					},
+					DownstreamRef:    "ghcr.io/mirror/app:1",
+					DownstreamDigest: "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+					Signature: &Signature{
+						Verified: false,
+						Type:     "none",
+					},
+				},
+			},
 			Tool:      "mhelm",
 			Version:   "v0.1.0",
 			Timestamp: ts,
@@ -181,5 +182,39 @@ func buildGoldenFile() File {
 				},
 			},
 		},
+	}
+}
+
+// TestReadMigratesV01 confirms v0.1.0-shaped lockfiles still parse and
+// land in the new mirror block.
+func TestReadMigratesV01(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "chart-lock.json")
+	v01 := `{
+  "schemaVersion": 1,
+  "chart": {"name": "tinychart", "version": "0.1.0"},
+  "upstream": {"type": "repo", "url": "https://example.com/charts", "chartContentDigest": "sha256:abc"},
+  "downstream": {"ref": "ghcr.io/mirror/tinychart:0.1.0", "ociManifestDigest": "sha256:def"},
+  "images": [{"ref": "x/y:1", "digest": "sha256:111", "source": "manifest"}],
+  "mirror": {"tool": "mhelm", "version": "v0.1.0", "timestamp": "2026-05-14T00:00:00Z"}
+}`
+	if err := os.WriteFile(path, []byte(v01), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	f, err := Read(path)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if f.APIVersion != APIVersion {
+		t.Errorf("APIVersion = %q, want %q", f.APIVersion, APIVersion)
+	}
+	if f.Mirror.Chart.Name != "tinychart" {
+		t.Errorf("mirror.chart.name not migrated: %q", f.Mirror.Chart.Name)
+	}
+	if len(f.Mirror.Images) != 1 || f.Mirror.Images[0].Ref != "x/y:1" {
+		t.Errorf("mirror.images not migrated: %+v", f.Mirror.Images)
+	}
+	if f.Mirror.Tool != "mhelm" {
+		t.Errorf("mirror.tool not migrated: %q", f.Mirror.Tool)
 	}
 }

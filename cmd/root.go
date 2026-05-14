@@ -36,6 +36,7 @@ func init() {
 	rootCmd.AddCommand(slsaCmd)
 	rootCmd.AddCommand(refsCmd)
 	rootCmd.AddCommand(driftCmd)
+	rootCmd.AddCommand(vulnGateCmd)
 	rootCmd.AddCommand(versionCmd)
 }
 

@@ -12,9 +12,10 @@ import "github.com/gilsstudio/mhelm/internal/lockfile"
 // candidates are dropped on resolution failure (regex sources need
 // registry confirmation to filter false positives).
 type candidate struct {
-	Ref     string
-	Source  string
-	Trusted bool
+	Ref           string
+	Source        string
+	DiscoveredVia string
+	Trusted       bool
 }
 
 // extractFromContainers collects `containers[].image` and

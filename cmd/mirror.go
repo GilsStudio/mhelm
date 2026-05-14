@@ -58,10 +58,10 @@ downstream refs and digests.`,
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "mirrored chart %s:%s → %s\n", res.ChartName, res.ChartVersion, res.DownstreamRef)
 
-		// 2. Mirror every image in lockfile.images[].
-		mirrorPrefix := strings.TrimPrefix(cf.Downstream.URL, "oci://")
-		inputs := make([]imagemirror.Input, len(lf.Images))
-		for i, img := range lf.Images {
+		// 2. Mirror every image in lockfile.mirror.images[].
+		mirrorPrefix := strings.TrimPrefix(cf.Mirror.Downstream.URL, "oci://")
+		inputs := make([]imagemirror.Input, len(lf.Mirror.Images))
+		for i, img := range lf.Mirror.Images {
 			inputs[i] = imagemirror.Input{UpstreamRef: img.Ref, UpstreamDigest: img.Digest}
 		}
 		imgResults := imagemirror.Mirror(cmd.Context(), inputs, mirrorPrefix)
@@ -73,8 +73,8 @@ downstream refs and digests.`,
 				fmt.Fprintf(cmd.OutOrStdout(), "  [FAIL] %s: %v\n", r.UpstreamRef, r.Err)
 				continue
 			}
-			lf.Images[i].DownstreamRef = r.DownstreamRef
-			lf.Images[i].DownstreamDigest = r.DownstreamDigest
+			lf.Mirror.Images[i].DownstreamRef = r.DownstreamRef
+			lf.Mirror.Images[i].DownstreamDigest = r.DownstreamDigest
 			status := "copied"
 			if r.Skipped {
 				status = "skipped"
@@ -83,23 +83,21 @@ downstream refs and digests.`,
 		}
 
 		// 3. Write the merged lockfile.
-		lf.SchemaVersion = lockfile.SchemaVersion
-		lf.Chart = lockfile.Chart{Name: res.ChartName, Version: res.ChartVersion}
-		lf.Upstream = lockfile.Upstream{
-			Type:               cf.Upstream.Type,
-			URL:                cf.Upstream.URL,
+		lf.APIVersion = lockfile.APIVersion
+		lf.Mirror.Chart = lockfile.Chart{Name: res.ChartName, Version: res.ChartVersion}
+		lf.Mirror.Upstream = lockfile.Upstream{
+			Type:               cf.Mirror.Upstream.Type,
+			URL:                cf.Mirror.Upstream.URL,
 			ChartContentDigest: res.ChartContentDigest,
 			OCIManifestDigest:  res.UpstreamManifestDigest,
 		}
-		lf.Downstream = lockfile.Downstream{
+		lf.Mirror.Downstream = lockfile.Downstream{
 			Ref:               res.DownstreamRef,
 			OCIManifestDigest: res.DownstreamManifestDigest,
 		}
-		lf.Mirror = lockfile.Mirror{
-			Tool:      "mhelm mirror",
-			Version:   Version,
-			Timestamp: time.Now().UTC(),
-		}
+		lf.Mirror.Tool = "mhelm mirror"
+		lf.Mirror.Version = Version
+		lf.Mirror.Timestamp = time.Now().UTC()
 		if err := lockfile.Write(lockPath, lf); err != nil {
 			return fmt.Errorf("write lockfile %s: %w", lockPath, err)
 		}

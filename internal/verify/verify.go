@@ -30,23 +30,60 @@ type Result struct {
 	Images map[string]*lockfile.Signature
 }
 
-// Run verifies every image ref in lf.Images against sigstore public-good
-// trust roots. cf.TrustedIdentities — when non-empty — restricts accepted
-// signatures to identities matching the allowlist; otherwise any valid
-// signature is recorded.
+// Run verifies every image ref in lf.Mirror.Images against sigstore
+// public-good trust roots. cf.Mirror.Verify.TrustedIdentities — when
+// non-empty — restricts accepted signatures to identities matching the
+// allowlist; otherwise any valid signature is recorded.
+// cf.Mirror.Verify.AllowUnsigned exempts listed repository paths from
+// verification entirely; those entries are recorded with Type="allowlisted".
 func Run(ctx context.Context, cf chartfile.File, lf lockfile.File) (Result, error) {
 	res := Result{Images: map[string]*lockfile.Signature{}}
 
-	co, err := buildCheckOpts(ctx, cf.TrustedIdentities)
+	co, err := buildCheckOpts(ctx, cf.Mirror.Verify.TrustedIdentities)
 	if err != nil {
 		return res, fmt.Errorf("build cosign check opts: %w", err)
 	}
 
-	for _, img := range lf.Images {
+	allowed := allowUnsignedIndex(cf.Mirror.Verify.AllowUnsigned)
+
+	for _, img := range lf.Mirror.Images {
+		if allowed[canonicalRepo(img.Ref)] {
+			res.Images[img.Ref] = &lockfile.Signature{
+				Verified:    true,
+				Type:        "allowlisted",
+				Allowlisted: true,
+			}
+			continue
+		}
 		sig := verifyOne(ctx, img.Ref, co)
 		res.Images[img.Ref] = sig
 	}
 	return res, nil
+}
+
+// allowUnsignedIndex normalizes the configured list into a lookup set
+// keyed by canonical repo path so an entry like "cilium/hubble-ui"
+// matches "quay.io/cilium/hubble-ui:v0.13.2" etc.
+func allowUnsignedIndex(entries []string) map[string]bool {
+	out := make(map[string]bool, len(entries))
+	for _, e := range entries {
+		out[canonicalRepo(e)] = true
+	}
+	return out
+}
+
+// canonicalRepo returns the registry-qualified repository path for a ref,
+// stripping any tag/digest and normalizing Docker Hub's implicit prefixes
+// ("nginx" → "index.docker.io/library/nginx"). Shared with the discover
+// package's matcher; kept here to avoid an internal-package import cycle.
+func canonicalRepo(s string) string {
+	if r, err := name.ParseReference(s); err == nil {
+		return r.Context().Name()
+	}
+	if r, err := name.NewRepository(s); err == nil {
+		return r.Name()
+	}
+	return strings.ToLower(s)
 }
 
 func buildCheckOpts(ctx context.Context, trusted []chartfile.TrustedIdentity) (*cosign.CheckOpts, error) {

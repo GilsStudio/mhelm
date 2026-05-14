@@ -31,7 +31,7 @@ type Result struct {
 func Run(ctx context.Context, cf chartfile.File) (Result, error) {
 	var res Result
 
-	pulled, err := chartpull.Pull(ctx, cf.Upstream)
+	pulled, err := chartpull.Pull(ctx, cf.Mirror.Upstream)
 	if err != nil {
 		return res, fmt.Errorf("pull: %w", err)
 	}
@@ -57,7 +57,7 @@ func Run(ctx context.Context, cf chartfile.File) (Result, error) {
 	}
 
 	destRef := fmt.Sprintf("%s/%s:%s",
-		strings.TrimPrefix(cf.Downstream.URL, "oci://"),
+		strings.TrimPrefix(cf.Mirror.Downstream.URL, "oci://"),
 		res.ChartName,
 		res.ChartVersion,
 	)

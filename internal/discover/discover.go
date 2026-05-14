@@ -37,14 +37,16 @@ type Result struct {
 	MirrorValues map[string]any
 }
 
-// Run pulls the chart referenced by cf.Upstream, renders it with the values
-// listed in cf.ValuesFiles (resolved relative to baseDir), discovers every
-// container image it references (manifest, env, ConfigMap, CRD-spec, manual),
-// resolves their registry digests, and builds the mirror-values override.
+// Run pulls the chart referenced by cf.Mirror.Upstream, renders it with
+// the effective discovery values (cf.Mirror.DiscoveryValues, falling
+// back to cf.Wrap.ValuesFiles for v0.2.0 bridging), discovers every
+// container image it references (manifest, env, ConfigMap, CRD-spec,
+// manual), resolves their registry digests, and builds the
+// mirror-values override.
 func Run(ctx context.Context, cf chartfile.File, baseDir string) (Result, error) {
 	var res Result
 
-	pulled, err := chartpull.Pull(ctx, cf.Upstream)
+	pulled, err := chartpull.Pull(ctx, cf.Mirror.Upstream)
 	if err != nil {
 		return res, fmt.Errorf("pull: %w", err)
 	}
@@ -61,9 +63,19 @@ func Run(ctx context.Context, cf chartfile.File, baseDir string) (Result, error)
 	res.ChartName = c.Metadata.Name
 	res.ChartVersion = c.Metadata.Version
 
-	rendered, merged, err := renderChart(c, cf.ValuesFiles, baseDir)
+	valuesFiles := cf.DiscoveryValuesEffective()
+	rendered, merged, err := renderChart(c, valuesFiles, baseDir)
 	if err != nil {
 		return res, fmt.Errorf("render: %w", err)
+	}
+
+	// Images discovered from the rendered manifests are tagged
+	// "discoveryValues" when any values file influenced the render, else
+	// "defaults". Annotation entries (publisher-declared) and manual
+	// extras carry their own DiscoveredVia values.
+	renderedVia := lockfile.DiscoveredViaDefaults
+	if len(valuesFiles) > 0 {
+		renderedVia = lockfile.DiscoveredViaDiscoveryValues
 	}
 
 	// 1. Run every extractor against every rendered doc.
@@ -77,15 +89,28 @@ func Run(ctx context.Context, cf chartfile.File, baseDir string) (Result, error)
 			cands = append(cands, extractFromCRDSpec(doc)...)
 		}
 	}
+	for i := range cands {
+		cands[i].DiscoveredVia = renderedVia
+	}
 
 	// 2. Chart.yaml annotation entries — trusted (publisher-declared).
 	for _, ref := range extractFromAnnotations(c) {
-		cands = append(cands, candidate{Ref: ref, Source: lockfile.SourceAnnotation, Trusted: true})
+		cands = append(cands, candidate{
+			Ref:           ref,
+			Source:        lockfile.SourceAnnotation,
+			DiscoveredVia: lockfile.DiscoveredViaDefaults,
+			Trusted:       true,
+		})
 	}
 
 	// 3. Manual extraImages from chart.json — trusted (user-declared).
-	for _, e := range cf.ExtraImages {
-		cands = append(cands, candidate{Ref: e.Ref, Source: lockfile.SourceManual, Trusted: true})
+	for _, e := range cf.Mirror.ExtraImages {
+		cands = append(cands, candidate{
+			Ref:           e.Ref,
+			Source:        lockfile.SourceManual,
+			DiscoveredVia: lockfile.DiscoveredViaExtraImages,
+			Trusted:       true,
+		})
 	}
 
 	// 4. Validate, dedupe, label sources.
@@ -109,7 +134,7 @@ func Run(ctx context.Context, cf chartfile.File, baseDir string) (Result, error)
 	}
 	// User-supplied valuesPath from extraImages overrides/augments the
 	// heuristic match (the user explicitly told us where this image lives).
-	for _, e := range cf.ExtraImages {
+	for _, e := range cf.Mirror.ExtraImages {
 		if e.ValuesPath == "" {
 			continue
 		}
@@ -124,7 +149,7 @@ func Run(ctx context.Context, cf chartfile.File, baseDir string) (Result, error)
 		}
 	}
 
-	res.MirrorValues = buildMirrorValues(matches, cf.ExtraImages, merged, cf.Downstream.URL)
+	res.MirrorValues = buildMirrorValues(matches, cf.Mirror.ExtraImages, merged, cf.Mirror.Downstream.URL)
 	return res, nil
 }
 

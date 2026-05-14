@@ -36,40 +36,46 @@ func clearGHAEnv(t *testing.T) {
 
 func canonicalInputs() (chartfile.File, lockfile.File) {
 	cf := chartfile.File{
-		Upstream: chartfile.Endpoint{
-			Type: chartfile.TypeRepo, Name: "tinychart",
-			URL: "https://example.com/charts", Version: "0.1.0",
-		},
-		Downstream: chartfile.Endpoint{
-			Type: chartfile.TypeOCI,
-			URL:  "oci://ghcr.io/mirror/tinychart",
+		APIVersion: chartfile.APIVersion,
+		Mirror: chartfile.Mirror{
+			Upstream: chartfile.Endpoint{
+				Type: chartfile.TypeRepo, Name: "tinychart",
+				URL: "https://example.com/charts", Version: "0.1.0",
+			},
+			Downstream: chartfile.Endpoint{
+				Type: chartfile.TypeOCI,
+				URL:  "oci://ghcr.io/mirror/tinychart",
+			},
 		},
 	}
 	lf := lockfile.File{
-		Chart: lockfile.Chart{Name: "tinychart", Version: "0.1.0"},
-		Upstream: lockfile.Upstream{
-			Type: "repo",
-			URL:  "https://example.com/charts",
-			ChartContentDigest: "sha256:0123456789abcdef0123456789abcdef" +
-				"0123456789abcdef0123456789abcdef",
-		},
-		Downstream: lockfile.Downstream{
-			Ref: "ghcr.io/mirror/tinychart:0.1.0",
-			OCIManifestDigest: "sha256:1111111111111111111111111111111111" +
-				"11111111111111111111111111111111",
-		},
-		Images: []lockfile.Image{
-			{
-				Ref:    "registry.io/app:1",
-				Digest: "sha256:abcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabca",
-				DownstreamRef:    "ghcr.io/mirror/app:1",
-				DownstreamDigest: "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-				Signature: &lockfile.Signature{
-					Verified:      true,
-					Type:          "cosign-keyless",
-					Subject:       "https://github.com/upstream/app/.github/workflows/release.yml@refs/heads/main",
-					Issuer:        "https://token.actions.githubusercontent.com",
-					RekorLogIndex: 99,
+		APIVersion: lockfile.APIVersion,
+		Mirror: lockfile.MirrorBlock{
+			Chart: lockfile.Chart{Name: "tinychart", Version: "0.1.0"},
+			Upstream: lockfile.Upstream{
+				Type: "repo",
+				URL:  "https://example.com/charts",
+				ChartContentDigest: "sha256:0123456789abcdef0123456789abcdef" +
+					"0123456789abcdef0123456789abcdef",
+			},
+			Downstream: lockfile.Downstream{
+				Ref: "ghcr.io/mirror/tinychart:0.1.0",
+				OCIManifestDigest: "sha256:1111111111111111111111111111111111" +
+					"11111111111111111111111111111111",
+			},
+			Images: []lockfile.Image{
+				{
+					Ref:              "registry.io/app:1",
+					Digest:           "sha256:abcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabca",
+					DownstreamRef:    "ghcr.io/mirror/app:1",
+					DownstreamDigest: "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+					Signature: &lockfile.Signature{
+						Verified:      true,
+						Type:          "cosign-keyless",
+						Subject:       "https://github.com/upstream/app/.github/workflows/release.yml@refs/heads/main",
+						Issuer:        "https://token.actions.githubusercontent.com",
+						RekorLogIndex: 99,
+					},
 				},
 			},
 		},
@@ -91,6 +97,43 @@ func TestPredicateJSONShape(t *testing.T) {
 
 	goldenPath := filepath.Join("testdata", "predicate.json")
 	compareOrUpdateGolden(t, goldenPath, got)
+}
+
+func TestPredicateIncludesPolicyBlock(t *testing.T) {
+	clearGHAEnv(t)
+	withFrozenClock(t)
+
+	cf, lf := canonicalInputs()
+	cf.Mirror.Verify.AllowUnsigned = []string{"upstream/hubble-ui"}
+	cf.Mirror.VulnPolicy = &chartfile.VulnPolicy{
+		FailOn: chartfile.FailOnHigh,
+		Allowlist: []chartfile.VulnWaiver{
+			{CVE: "CVE-2024-0001", Expires: "2030-01-01", Reason: "tracked upstream in upstream#1234"},
+		},
+	}
+	p := Build(cf, lf, "v1.2.3")
+	if p.Policy == nil {
+		t.Fatal("Policy block missing")
+	}
+	if p.Policy.VulnFailOn != chartfile.FailOnHigh {
+		t.Errorf("Policy.VulnFailOn = %q, want %q", p.Policy.VulnFailOn, chartfile.FailOnHigh)
+	}
+	if len(p.Policy.VulnAllowlist) != 1 || p.Policy.VulnAllowlist[0].CVE != "CVE-2024-0001" {
+		t.Errorf("Policy.VulnAllowlist = %+v", p.Policy.VulnAllowlist)
+	}
+	if len(p.Policy.AllowUnsignedRepos) != 1 || p.Policy.AllowUnsignedRepos[0] != "upstream/hubble-ui" {
+		t.Errorf("Policy.AllowUnsignedRepos = %+v", p.Policy.AllowUnsignedRepos)
+	}
+}
+
+func TestPredicateOmitsPolicyWhenAbsent(t *testing.T) {
+	clearGHAEnv(t)
+	withFrozenClock(t)
+	cf, lf := canonicalInputs()
+	p := Build(cf, lf, "v1.2.3")
+	if p.Policy != nil {
+		t.Errorf("Policy = %+v, want nil when no waivers configured", p.Policy)
+	}
 }
 
 func TestPredicateJSONShape_GitHubActionsContext(t *testing.T) {

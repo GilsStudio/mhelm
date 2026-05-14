@@ -24,14 +24,14 @@ func newIndex(chartName string, entries ...chartEntry) *repo.IndexFile {
 type chartEntry struct{ version, digest string }
 
 func TestCompareChartRepoDigest(t *testing.T) {
-	cf := chartfile.File{Upstream: chartfile.Endpoint{
+	cf := chartfile.File{Mirror: chartfile.Mirror{Upstream: chartfile.Endpoint{
 		Type: chartfile.TypeRepo, Name: "tinychart", Version: "0.1.0",
 		URL: "https://example.com/charts",
-	}}
+	}}}
 
 	t.Run("match-returns-nil", func(t *testing.T) {
 		idx := newIndex("tinychart", chartEntry{version: "0.1.0", digest: "abc123"})
-		lf := lockfile.File{Upstream: lockfile.Upstream{ChartContentDigest: "sha256:abc123"}}
+		lf := lockfile.File{Mirror: lockfile.MirrorBlock{Upstream: lockfile.Upstream{ChartContentDigest: "sha256:abc123"}}}
 		got := compareChartRepoDigest(idx, cf, lf)
 		if got != nil {
 			t.Errorf("got %+v, want nil", got)
@@ -40,7 +40,7 @@ func TestCompareChartRepoDigest(t *testing.T) {
 
 	t.Run("digest-mismatch-returns-rotation", func(t *testing.T) {
 		idx := newIndex("tinychart", chartEntry{version: "0.1.0", digest: "newdigest"})
-		lf := lockfile.File{Upstream: lockfile.Upstream{ChartContentDigest: "sha256:abc123"}}
+		lf := lockfile.File{Mirror: lockfile.MirrorBlock{Upstream: lockfile.Upstream{ChartContentDigest: "sha256:abc123"}}}
 		got := compareChartRepoDigest(idx, cf, lf)
 		want := []lockfile.DriftFinding{{
 			Kind:     lockfile.DriftKindUpstreamRotation,
@@ -56,7 +56,7 @@ func TestCompareChartRepoDigest(t *testing.T) {
 
 	t.Run("missing-from-index-returns-upstream-missing", func(t *testing.T) {
 		idx := newIndex("tinychart", chartEntry{version: "0.2.0", digest: "x"})
-		lf := lockfile.File{Upstream: lockfile.Upstream{ChartContentDigest: "sha256:abc"}}
+		lf := lockfile.File{Mirror: lockfile.MirrorBlock{Upstream: lockfile.Upstream{ChartContentDigest: "sha256:abc"}}}
 		got := compareChartRepoDigest(idx, cf, lf)
 		want := []lockfile.DriftFinding{{
 			Kind:    lockfile.DriftKindUpstreamMissing,
@@ -72,7 +72,7 @@ func TestCompareChartRepoDigest(t *testing.T) {
 		// Lockfiles from a version of mhelm that didn't record the digest
 		// should not produce spurious rotation findings.
 		idx := newIndex("tinychart", chartEntry{version: "0.1.0", digest: "anything"})
-		lf := lockfile.File{Upstream: lockfile.Upstream{ChartContentDigest: ""}}
+		lf := lockfile.File{Mirror: lockfile.MirrorBlock{Upstream: lockfile.Upstream{ChartContentDigest: ""}}}
 		got := compareChartRepoDigest(idx, cf, lf)
 		if got != nil {
 			t.Errorf("got %+v, want nil", got)
@@ -81,7 +81,7 @@ func TestCompareChartRepoDigest(t *testing.T) {
 
 	t.Run("digest-comparison-is-case-insensitive", func(t *testing.T) {
 		idx := newIndex("tinychart", chartEntry{version: "0.1.0", digest: "ABC123"})
-		lf := lockfile.File{Upstream: lockfile.Upstream{ChartContentDigest: "sha256:abc123"}}
+		lf := lockfile.File{Mirror: lockfile.MirrorBlock{Upstream: lockfile.Upstream{ChartContentDigest: "sha256:abc123"}}}
 		got := compareChartRepoDigest(idx, cf, lf)
 		if got != nil {
 			t.Errorf("got %+v, want nil (case-insensitive match)", got)
@@ -112,7 +112,7 @@ func TestCompareImageDigest(t *testing.T) {
 }
 
 func TestCompareChartOCIDigest(t *testing.T) {
-	lf := lockfile.File{Upstream: lockfile.Upstream{OCIManifestDigest: "sha256:x"}}
+	lf := lockfile.File{Mirror: lockfile.MirrorBlock{Upstream: lockfile.Upstream{OCIManifestDigest: "sha256:x"}}}
 	if got := compareChartOCIDigest("r/c:1", "sha256:x", lf); got != nil {
 		t.Errorf("match: got %+v, want nil", got)
 	}

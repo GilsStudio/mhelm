@@ -1,3 +1,7 @@
+// Package lockfile parses and writes chart-lock.json, the generated
+// source of truth recording every pinned digest mhelm has mirrored. The
+// v0.2.0 shape adds apiVersion and nests transport state under a
+// `mirror` block; v0.1.0 flat files are read transparently.
 package lockfile
 
 import (
@@ -10,16 +14,25 @@ import (
 	"time"
 )
 
-const SchemaVersion = 1
+const APIVersion = "mhelm.io/v1alpha1"
 
 type File struct {
-	SchemaVersion int        `json:"schemaVersion"`
-	Chart         Chart      `json:"chart"`
-	Upstream      Upstream   `json:"upstream"`
-	Downstream    Downstream `json:"downstream"`
-	Images        []Image    `json:"images,omitempty"`
-	Mirror        Mirror     `json:"mirror"`
-	Drift         *Drift     `json:"drift,omitempty"`
+	APIVersion string      `json:"apiVersion"`
+	Mirror     MirrorBlock `json:"mirror"`
+	Drift      *Drift      `json:"drift,omitempty"`
+}
+
+// MirrorBlock is the transport-phase output: what was pulled, what was
+// pushed, every image digest in between, and a tool/version/timestamp
+// stamp that identifies the producer.
+type MirrorBlock struct {
+	Chart      Chart      `json:"chart"`
+	Upstream   Upstream   `json:"upstream"`
+	Downstream Downstream `json:"downstream"`
+	Images     []Image    `json:"images,omitempty"`
+	Tool       string     `json:"tool"`
+	Version    string     `json:"version"`
+	Timestamp  time.Time  `json:"timestamp"`
 }
 
 // Drift captures the result of the most recent `mhelm drift` run.
@@ -50,7 +63,8 @@ const (
 type Image struct {
 	Ref              string       `json:"ref"`
 	Digest           string       `json:"digest,omitempty"`
-	Source           string       `json:"source,omitempty"` // one of the Source* constants
+	Source           string       `json:"source,omitempty"`        // one of the Source* constants
+	DiscoveredVia    string       `json:"discoveredVia,omitempty"` // one of the DiscoveredVia* constants
 	ValuesPaths      []ValuesPath `json:"valuesPaths,omitempty"`
 	DownstreamRef    string       `json:"downstreamRef,omitempty"`
 	DownstreamDigest string       `json:"downstreamDigest,omitempty"`
@@ -62,10 +76,20 @@ type Image struct {
 const (
 	SourceManifest   = "manifest"   // containers[].image / initContainers[].image
 	SourceAnnotation = "annotation" // Chart.yaml artifacthub.io/images
-	SourceManual     = "manual"     // chart.json extraImages[]
+	SourceManual     = "manual"     // chart.json mirror.extraImages[]
 	SourceEnv        = "env"        // containers[].env[].value (regex + validated)
 	SourceConfigMap  = "configmap"  // any ConfigMap data value (regex + validated)
 	SourceCRDSpec    = "crd-spec"   // non-builtin kind walked (regex + validated)
+)
+
+// DiscoveredVia labels record *which configured input surface* caused an
+// image to be mirrored: the chart defaults, the user's mirror.discoveryValues,
+// or the explicit mirror.extraImages list. This is the audit answer to
+// "why is this image in my mirror?" — orthogonal to Source (the extractor).
+const (
+	DiscoveredViaDefaults        = "defaults"
+	DiscoveredViaDiscoveryValues = "discoveryValues"
+	DiscoveredViaExtraImages     = "extraImages"
 )
 
 // ValuesPath is a dotted path in the chart's merged values that produces
@@ -97,11 +121,11 @@ type Upstream struct {
 // attempt. Written by `mhelm verify`.
 type Signature struct {
 	// Verified is true only when a signature exists AND the verification
-	// path (cert chain + Rekor entry) succeeded. False covers both
-	// "not signed" and "signed but verification failed" — Type and Error
-	// disambiguate.
+	// path (cert chain + Rekor entry) succeeded, OR when the image is
+	// explicitly allowlisted via mirror.verify.allowUnsigned (in which
+	// case Allowlisted is also true and Type == "allowlisted").
 	Verified bool `json:"verified"`
-	// Type: "cosign-keyless" | "cosign-key" | "none" | "error".
+	// Type: "cosign-keyless" | "cosign-key" | "none" | "error" | "allowlisted".
 	Type string `json:"type"`
 	// Subject / Issuer: the OIDC identity from the Fulcio cert (keyless).
 	Subject string `json:"subject,omitempty"`
@@ -110,17 +134,15 @@ type Signature struct {
 	RekorLogIndex int64 `json:"rekorLogIndex,omitempty"`
 	// Error: non-empty when Type == "error".
 	Error string `json:"error,omitempty"`
+	// Allowlisted is true when the image matched mirror.verify.allowUnsigned.
+	// The original signature outcome (if any was attempted) is dropped —
+	// the allowlist is the supply-chain record.
+	Allowlisted bool `json:"allowlisted,omitempty"`
 }
 
 type Downstream struct {
 	Ref               string `json:"ref"`
 	OCIManifestDigest string `json:"ociManifestDigest"`
-}
-
-type Mirror struct {
-	Tool      string    `json:"tool"`
-	Version   string    `json:"version"`
-	Timestamp time.Time `json:"timestamp"`
 }
 
 // ContentDigest returns the sha256 of b prefixed with "sha256:".
@@ -136,6 +158,9 @@ func HexFromDigest(d string) string {
 }
 
 func Write(path string, f File) error {
+	if f.APIVersion == "" {
+		f.APIVersion = APIVersion
+	}
 	data, err := json.MarshalIndent(f, "", "  ")
 	if err != nil {
 		return err
@@ -143,19 +168,67 @@ func Write(path string, f File) error {
 	return os.WriteFile(path, append(data, '\n'), 0o644)
 }
 
-// Read loads an existing chart-lock.json. Returns os.ErrNotExist when the
-// file does not exist — callers may use errors.Is to treat that as
-// "fresh start".
+// Read loads an existing chart-lock.json, transparently migrating
+// v0.1.0 flat-shape files into the v0.2.0 nested shape. Returns
+// os.ErrNotExist when the file does not exist — callers may use
+// errors.Is to treat that as "fresh start".
 func Read(path string) (File, error) {
 	var f File
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return f, err
 	}
-	if err := json.Unmarshal(b, &f); err != nil {
+
+	var head struct {
+		APIVersion string `json:"apiVersion"`
+	}
+	if jerr := json.Unmarshal(b, &head); jerr != nil {
+		return f, jerr
+	}
+	if head.APIVersion == APIVersion {
+		if err := json.Unmarshal(b, &f); err != nil {
+			return f, err
+		}
+		return f, nil
+	}
+	// v0.1.0 flat shape: schemaVersion=1, top-level chart/upstream/downstream/images.
+	var legacy v01Lockfile
+	if err := json.Unmarshal(b, &legacy); err != nil {
 		return f, err
 	}
-	return f, nil
+	return legacy.migrate(), nil
+}
+
+// v01Lockfile is the flat v0.1.0 chart-lock.json shape, retained only
+// for the migration path inside Read.
+type v01Lockfile struct {
+	SchemaVersion int        `json:"schemaVersion"`
+	Chart         Chart      `json:"chart"`
+	Upstream      Upstream   `json:"upstream"`
+	Downstream    Downstream `json:"downstream"`
+	Images        []Image    `json:"images,omitempty"`
+	Mirror        struct {
+		Tool      string    `json:"tool"`
+		Version   string    `json:"version"`
+		Timestamp time.Time `json:"timestamp"`
+	} `json:"mirror"`
+	Drift *Drift `json:"drift,omitempty"`
+}
+
+func (v v01Lockfile) migrate() File {
+	return File{
+		APIVersion: APIVersion,
+		Mirror: MirrorBlock{
+			Chart:      v.Chart,
+			Upstream:   v.Upstream,
+			Downstream: v.Downstream,
+			Images:     v.Images,
+			Tool:       v.Mirror.Tool,
+			Version:    v.Mirror.Version,
+			Timestamp:  v.Mirror.Timestamp,
+		},
+		Drift: v.Drift,
+	}
 }
 
 // IsNotExist reports whether err signals a missing lockfile (sugar for

@@ -34,7 +34,27 @@ type Predicate struct {
 	Upstream           Upstream         `json:"upstream"`
 	Downstream         Downstream       `json:"downstream"`
 	UpstreamSignatures []SignatureEntry `json:"upstreamSignatures,omitempty"`
-	BuildContext       *BuildContext    `json:"buildContext,omitempty"`
+	// Policy records the supply-chain waivers in effect for this mirror
+	// run — vuln-allowlist + allowUnsigned exemptions. Surfaced in the
+	// attestation so reviewers can audit *what was waived* directly from
+	// the signed predicate, not from CI logs.
+	Policy       *Policy       `json:"policy,omitempty"`
+	BuildContext *BuildContext `json:"buildContext,omitempty"`
+}
+
+// Policy mirrors chart.json#mirror.{verify.allowUnsigned, vulnPolicy}.
+type Policy struct {
+	VulnFailOn         string       `json:"vulnFailOn,omitempty"`
+	VulnAllowlist      []VulnWaiver `json:"vulnAllowlist,omitempty"`
+	AllowUnsignedRepos []string     `json:"allowUnsignedRepos,omitempty"`
+}
+
+// VulnWaiver is the in-attestation copy of chartfile.VulnWaiver
+// (decoupled to keep the predicate JSON shape independent).
+type VulnWaiver struct {
+	CVE     string `json:"cve"`
+	Expires string `json:"expires"`
+	Reason  string `json:"reason"`
 }
 
 type Tool struct {
@@ -99,22 +119,23 @@ func Build(cf chartfile.File, lf lockfile.File, mhelmVersion string) Predicate {
 		Tool:  Tool{Name: "mhelm", Version: mhelmVersion},
 		RanAt: now(),
 		Upstream: Upstream{
-			Type:               cf.Upstream.Type,
-			URL:                cf.Upstream.URL,
-			ChartName:          lf.Chart.Name,
-			ChartVersion:       lf.Chart.Version,
-			ChartContentDigest: lf.Upstream.ChartContentDigest,
+			Type:               cf.Mirror.Upstream.Type,
+			URL:                cf.Mirror.Upstream.URL,
+			ChartName:          lf.Mirror.Chart.Name,
+			ChartVersion:       lf.Mirror.Chart.Version,
+			ChartContentDigest: lf.Mirror.Upstream.ChartContentDigest,
 		},
 		Downstream: Downstream{
-			RegistryPrefix: strings.TrimPrefix(cf.Downstream.URL, "oci://"),
+			RegistryPrefix: strings.TrimPrefix(cf.Mirror.Downstream.URL, "oci://"),
 			Chart: Artifact{
-				Ref:            lf.Downstream.Ref,
-				ManifestDigest: lf.Downstream.OCIManifestDigest,
+				Ref:            lf.Mirror.Downstream.Ref,
+				ManifestDigest: lf.Mirror.Downstream.OCIManifestDigest,
 			},
 		},
+		Policy: buildPolicy(cf),
 	}
 
-	for _, img := range lf.Images {
+	for _, img := range lf.Mirror.Images {
 		if img.DownstreamRef != "" {
 			p.Downstream.Images = append(p.Downstream.Images, ImageArtifact{
 				UpstreamRef:    img.Ref,
@@ -138,6 +159,28 @@ func Build(cf chartfile.File, lf lockfile.File, mhelmVersion string) Predicate {
 		p.BuildContext = ctx
 	}
 
+	return p
+}
+
+// buildPolicy returns the Policy block iff any waiver/exemption is
+// configured. Empty policy is omitted so unwaived mirror runs stay terse.
+func buildPolicy(cf chartfile.File) *Policy {
+	hasVuln := cf.Mirror.VulnPolicy != nil && (cf.Mirror.VulnPolicy.FailOn != "" || len(cf.Mirror.VulnPolicy.Allowlist) > 0)
+	hasAllow := len(cf.Mirror.Verify.AllowUnsigned) > 0
+	if !hasVuln && !hasAllow {
+		return nil
+	}
+	p := &Policy{AllowUnsignedRepos: cf.Mirror.Verify.AllowUnsigned}
+	if cf.Mirror.VulnPolicy != nil {
+		p.VulnFailOn = cf.Mirror.VulnPolicy.FailOnEffective()
+		for _, w := range cf.Mirror.VulnPolicy.Allowlist {
+			p.VulnAllowlist = append(p.VulnAllowlist, VulnWaiver{
+				CVE:     w.CVE,
+				Expires: w.Expires,
+				Reason:  w.Reason,
+			})
+		}
+	}
 	return p
 }
 

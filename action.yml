@@ -202,6 +202,9 @@ runs:
 
           # 3. Vulnerability report in cosign vuln/v1 schema (grype's native output).
           grype "sbom:$SBOM" -o cosign-vuln --file "$VULN"
+          # Apply chart.json#mirror.vulnPolicy before attesting — fail the run
+          # rather than sign-and-attest a known-bad image.
+          mhelm vuln-gate --vuln-file "$VULN" --image "$REF" "$DIR"
           cosign attest --yes --predicate "$VULN" --type vuln "$REF"
 
           # 4. SLSA v1 build provenance.

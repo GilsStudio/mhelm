@@ -1,0 +1,50 @@
+{
+  "apiVersion": "mhelm.io/v1alpha1",
+  "mirror": {
+    "upstream": {
+      "type": "oci",
+      "url": "oci://quay.io/cilium/charts",
+      "name": "cilium",
+      "version": "1.19.3"
+    },
+    "downstream": {
+      "type": "oci",
+      "url": "oci://ghcr.io/myorg/mirror"
+    },
+    "discoveryValues": [
+      "mirror-discovery.yml"
+    ],
+    "extraImages": [
+      {
+        "ref": "quay.io/cilium/cilium-cli:v0.18.0",
+        "reason": "operator-managed; pulled at runtime by the cilium-cli CRD reconciler"
+      }
+    ],
+    "verify": {
+      "trustedIdentities": [
+        {
+          "subjectRegex": "https://github.com/cilium/.*",
+          "issuer": "https://token.actions.githubusercontent.com"
+        }
+      ],
+      "allowUnsigned": [
+        "cilium/hubble-ui"
+      ]
+    },
+    "vulnPolicy": {
+      "failOn": "critical",
+      "allowlist": [
+        {
+          "cve": "CVE-2024-1234",
+          "expires": "2026-12-31",
+          "reason": "tracked upstream in cilium#54321; no patch available yet"
+        }
+      ]
+    }
+  },
+  "wrap": {
+    "valuesFiles": [
+      "values.yml"
+    ]
+  }
+}

@@ -1,3 +1,7 @@
+// Package chartfile parses chart.json, the user-edited input spec that
+// describes a chart to mirror. v0.2.0 introduces apiVersion +
+// mirror/wrap sections; the older flat v0.1.0 shape is accepted on read
+// and warned about, never rewritten on disk.
 package chartfile
 
 import (
@@ -6,11 +10,19 @@ import (
 	"os"
 	"path"
 	"strings"
+	"time"
 )
 
 const (
 	TypeRepo = "repo"
 	TypeOCI  = "oci"
+
+	APIVersion = "mhelm.io/v1alpha1"
+
+	FailOnCritical = "critical"
+	FailOnHigh     = "high"
+	FailOnMedium   = "medium"
+	FailOnNever    = "never"
 )
 
 type Endpoint struct {
@@ -20,94 +32,243 @@ type Endpoint struct {
 	Version string `json:"version,omitempty"`
 }
 
+// File is the in-memory representation of chart.json. Always carries
+// APIVersion = mhelm.io/v1alpha1 after Load; v0.1.0 inputs are
+// transparently migrated.
 type File struct {
-	Upstream   Endpoint `json:"upstream"`
-	Downstream Endpoint `json:"downstream"`
-	// ValuesFiles are paths to YAML values overrides, relative to chart.json's
-	// directory. Merged in order during `mhelm discover` so rendered manifests
-	// reflect the values the consumer intends to deploy with.
-	ValuesFiles []string `json:"valuesFiles,omitempty"`
-	// ExtraImages are images that automated discovery can't find (operator-managed,
-	// CRD-embedded refs the operator pulls at runtime, hardcoded operator defaults).
-	// They are mirrored alongside auto-discovered images and, when ValuesPath is
-	// set, rewritten into mirror-values.yaml.
-	ExtraImages []ExtraImage `json:"extraImages,omitempty"`
-	// TrustedIdentities is an optional allowlist of cosign keyless signing
-	// identities. When set, `mhelm verify` accepts only signatures whose
-	// SubjectRegex + Issuer match an entry; mismatches are recorded as
-	// unverified and (with --strict) cause exit non-zero.
+	APIVersion string `json:"apiVersion"`
+	Mirror     Mirror `json:"mirror"`
+	Wrap       *Wrap  `json:"wrap,omitempty"`
+}
+
+// Mirror owns transport: upstream identity, downstream destination,
+// discovery surface, signature policy, vulnerability policy.
+type Mirror struct {
+	Upstream        Endpoint     `json:"upstream"`
+	Downstream      Endpoint     `json:"downstream"`
+	DiscoveryValues []string     `json:"discoveryValues,omitempty"`
+	ExtraImages     []ExtraImage `json:"extraImages,omitempty"`
+	Verify          Verify       `json:"verify,omitempty"`
+	VulnPolicy      *VulnPolicy  `json:"vulnPolicy,omitempty"`
+}
+
+// Verify is the signature-policy surface.
+type Verify struct {
 	TrustedIdentities []TrustedIdentity `json:"trustedIdentities,omitempty"`
+	// AllowUnsigned lists image repository paths (e.g. "cilium/hubble-ui")
+	// for which a missing or unverifiable upstream signature is acceptable.
+	// Matched against the canonical repo path of each image ref. Exact
+	// match, no globs.
+	AllowUnsigned []string `json:"allowUnsigned,omitempty"`
 }
 
 // TrustedIdentity describes one allowed signing identity for cosign
 // keyless verification. SubjectRegex matches against the Fulcio cert's
 // SAN (typically a GitHub Actions workflow URL); Issuer is the OIDC
-// issuer URL (e.g. https://token.actions.githubusercontent.com).
+// issuer URL.
 type TrustedIdentity struct {
 	SubjectRegex string `json:"subjectRegex"`
 	Issuer       string `json:"issuer"`
 }
 
-// ExtraImage is a manual entry the user adds when discover misses an image
-// (operator pattern, CRD-only chart, etc.). Reviewable in git.
+// VulnPolicy gates `mhelm vuln-gate` (which reads grype cosign-vuln
+// JSON and applies these rules per image).
+type VulnPolicy struct {
+	// FailOn is the severity threshold: "critical" | "high" | "medium" | "never".
+	// Defaults to "critical" via FailOnEffective() when empty.
+	FailOn    string       `json:"failOn,omitempty"`
+	Allowlist []VulnWaiver `json:"allowlist,omitempty"`
+}
+
+// FailOnEffective returns the configured threshold or the default.
+func (p *VulnPolicy) FailOnEffective() string {
+	if p == nil || p.FailOn == "" {
+		return FailOnCritical
+	}
+	return p.FailOn
+}
+
+// VulnWaiver allowlists a single CVE for a bounded window. Expired
+// waivers hard-fail `mhelm vuln-gate` to force refresh.
+type VulnWaiver struct {
+	CVE     string `json:"cve"`
+	Expires string `json:"expires"` // YYYY-MM-DD
+	Reason  string `json:"reason"`
+}
+
+// ExpiresTime parses the YYYY-MM-DD expires date. Returns the zero
+// time and an error when malformed.
+func (w VulnWaiver) ExpiresTime() (time.Time, error) {
+	return time.Parse("2006-01-02", w.Expires)
+}
+
+// ExtraImage is a manual entry for an image automated discovery can't
+// find (operator-managed, CRD-embedded, webhook-injected). Reason is
+// recorded in MirrorProvenance so the supply-chain audit captures
+// *why* a non-discovered image was mirrored.
 type ExtraImage struct {
 	Ref        string `json:"ref"`
 	ValuesPath string `json:"valuesPath,omitempty"`
+	Reason     string `json:"reason,omitempty"`
 }
 
+// Wrap is the composition surface — used by `mhelm wrap` in v0.3.0 and
+// read by `mhelm discover` today to preserve v0.1.0 behavior
+// (discovery values + mirror-values.yaml generation).
+type Wrap struct {
+	Name           string            `json:"name,omitempty"`
+	Version        string            `json:"version,omitempty"`
+	ValuesFiles    []string          `json:"valuesFiles,omitempty"`
+	ImageOverrides map[string]string `json:"imageOverrides,omitempty"`
+	ExtraManifests []string          `json:"extraManifests,omitempty"`
+}
+
+// Load reads chart.json. v0.1.0 flat-shape files are migrated in
+// memory and a one-line warning is printed to stderr; the file on
+// disk is never rewritten.
 func Load(filePath string) (File, error) {
 	var f File
 	b, err := os.ReadFile(filePath)
 	if err != nil {
 		return f, err
 	}
-	if err := json.Unmarshal(b, &f); err != nil {
+
+	var head struct {
+		APIVersion string `json:"apiVersion"`
+	}
+	if err := json.Unmarshal(b, &head); err != nil {
 		return f, fmt.Errorf("parse %s: %w", filePath, err)
 	}
-	return f, nil
+
+	switch head.APIVersion {
+	case APIVersion:
+		if err := json.Unmarshal(b, &f); err != nil {
+			return f, fmt.Errorf("parse %s: %w", filePath, err)
+		}
+		return f, nil
+	case "":
+		var legacy v01File
+		if err := json.Unmarshal(b, &legacy); err != nil {
+			return f, fmt.Errorf("parse %s: %w", filePath, err)
+		}
+		fmt.Fprintf(os.Stderr,
+			"warn: %s uses the v0.1.0 schema (no apiVersion). Migrate to %q — see CHANGELOG. (in-memory migration applied; file not modified)\n",
+			filePath, APIVersion)
+		return legacy.migrate(), nil
+	default:
+		return f, fmt.Errorf("%s: unsupported apiVersion %q (expected %q or empty for v0.1.0 auto-migrate)",
+			filePath, head.APIVersion, APIVersion)
+	}
+}
+
+// v01File is the flat v0.1.0 chart.json shape. Kept only for the
+// migration path inside Load.
+type v01File struct {
+	Upstream          Endpoint          `json:"upstream"`
+	Downstream        Endpoint          `json:"downstream"`
+	ValuesFiles       []string          `json:"valuesFiles,omitempty"`
+	ExtraImages       []ExtraImage      `json:"extraImages,omitempty"`
+	TrustedIdentities []TrustedIdentity `json:"trustedIdentities,omitempty"`
+}
+
+func (v v01File) migrate() File {
+	f := File{
+		APIVersion: APIVersion,
+		Mirror: Mirror{
+			Upstream:    v.Upstream,
+			Downstream:  v.Downstream,
+			ExtraImages: v.ExtraImages,
+			Verify:      Verify{TrustedIdentities: v.TrustedIdentities},
+		},
+	}
+	if len(v.ValuesFiles) > 0 {
+		f.Wrap = &Wrap{ValuesFiles: v.ValuesFiles}
+	}
+	return f
 }
 
 func (f File) Validate() error {
-	switch f.Upstream.Type {
+	if f.APIVersion != "" && f.APIVersion != APIVersion {
+		return fmt.Errorf("apiVersion %q invalid (expected %q)", f.APIVersion, APIVersion)
+	}
+	up := f.Mirror.Upstream
+	switch up.Type {
 	case TypeRepo:
-		if f.Upstream.Name == "" {
-			return fmt.Errorf("upstream.name is required when upstream.type=%q", TypeRepo)
+		if up.Name == "" {
+			return fmt.Errorf("mirror.upstream.name is required when mirror.upstream.type=%q", TypeRepo)
 		}
 	case TypeOCI:
-		if !strings.HasPrefix(f.Upstream.URL, "oci://") {
-			return fmt.Errorf("upstream.url must start with oci:// when upstream.type=%q", TypeOCI)
+		if !strings.HasPrefix(up.URL, "oci://") {
+			return fmt.Errorf("mirror.upstream.url must start with oci:// when mirror.upstream.type=%q", TypeOCI)
 		}
 	case "":
-		return fmt.Errorf("upstream.type is required (%q or %q)", TypeRepo, TypeOCI)
+		return fmt.Errorf("mirror.upstream.type is required (%q or %q)", TypeRepo, TypeOCI)
 	default:
-		return fmt.Errorf("upstream.type %q invalid (expected %q or %q)", f.Upstream.Type, TypeRepo, TypeOCI)
+		return fmt.Errorf("mirror.upstream.type %q invalid (expected %q or %q)", up.Type, TypeRepo, TypeOCI)
 	}
-	if f.Upstream.URL == "" {
-		return fmt.Errorf("upstream.url is required")
+	if up.URL == "" {
+		return fmt.Errorf("mirror.upstream.url is required")
 	}
-	if f.Upstream.Version == "" {
-		return fmt.Errorf("upstream.version is required")
+	if up.Version == "" {
+		return fmt.Errorf("mirror.upstream.version is required")
 	}
-	if f.Downstream.Type != TypeOCI {
-		return fmt.Errorf("downstream.type must be %q (got %q)", TypeOCI, f.Downstream.Type)
+	if f.Mirror.Downstream.Type != TypeOCI {
+		return fmt.Errorf("mirror.downstream.type must be %q (got %q)", TypeOCI, f.Mirror.Downstream.Type)
 	}
-	if !strings.HasPrefix(f.Downstream.URL, "oci://") {
-		return fmt.Errorf("downstream.url must start with oci://")
+	if !strings.HasPrefix(f.Mirror.Downstream.URL, "oci://") {
+		return fmt.Errorf("mirror.downstream.url must start with oci://")
 	}
-	for i, e := range f.ExtraImages {
+	for i, e := range f.Mirror.ExtraImages {
 		if e.Ref == "" {
-			return fmt.Errorf("extraImages[%d].ref is required", i)
+			return fmt.Errorf("mirror.extraImages[%d].ref is required", i)
+		}
+	}
+	if f.Mirror.VulnPolicy != nil {
+		switch f.Mirror.VulnPolicy.FailOn {
+		case "", FailOnCritical, FailOnHigh, FailOnMedium, FailOnNever:
+		default:
+			return fmt.Errorf("mirror.vulnPolicy.failOn %q invalid (expected one of critical/high/medium/never)",
+				f.Mirror.VulnPolicy.FailOn)
+		}
+		for i, w := range f.Mirror.VulnPolicy.Allowlist {
+			if w.CVE == "" {
+				return fmt.Errorf("mirror.vulnPolicy.allowlist[%d].cve is required", i)
+			}
+			if w.Expires == "" {
+				return fmt.Errorf("mirror.vulnPolicy.allowlist[%d].expires is required (YYYY-MM-DD)", i)
+			}
+			if _, err := w.ExpiresTime(); err != nil {
+				return fmt.Errorf("mirror.vulnPolicy.allowlist[%d].expires %q: %w", i, w.Expires, err)
+			}
+			if w.Reason == "" {
+				return fmt.Errorf("mirror.vulnPolicy.allowlist[%d].reason is required", i)
+			}
 		}
 	}
 	return nil
 }
 
-// ChartName returns the chart name for the push reference: Upstream.Name for
-// repo-type, last path segment of Upstream.URL for oci-type.
+// ChartName returns the chart name for the push reference: upstream
+// name for repo-type, last path segment of upstream URL for oci-type.
 func (f File) ChartName() string {
-	if f.Upstream.Type == TypeRepo {
-		return f.Upstream.Name
+	up := f.Mirror.Upstream
+	if up.Type == TypeRepo {
+		return up.Name
 	}
-	ref := strings.TrimPrefix(f.Upstream.URL, "oci://")
+	ref := strings.TrimPrefix(up.URL, "oci://")
 	return path.Base(ref)
+}
+
+// DiscoveryValuesEffective returns the values files the discover
+// pipeline should render with. mirror.discoveryValues wins when set;
+// otherwise wrap.valuesFiles (the v0.2.0 bridge that goes away when
+// `mhelm wrap` lands in v0.3.0).
+func (f File) DiscoveryValuesEffective() []string {
+	if len(f.Mirror.DiscoveryValues) > 0 {
+		return f.Mirror.DiscoveryValues
+	}
+	if f.Wrap != nil {
+		return f.Wrap.ValuesFiles
+	}
+	return nil
 }

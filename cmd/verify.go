@@ -49,7 +49,7 @@ Network reads only — no pushes.`,
 			}
 			return fmt.Errorf("read %s: %w", lockPath, err)
 		}
-		if len(lf.Images) == 0 {
+		if len(lf.Mirror.Images) == 0 {
 			fmt.Fprintln(cmd.OutOrStdout(), "no images in lockfile — nothing to verify")
 			return nil
 		}
@@ -60,9 +60,9 @@ Network reads only — no pushes.`,
 		}
 
 		var unverified int
-		for i, img := range lf.Images {
+		for i, img := range lf.Mirror.Images {
 			sig := res.Images[img.Ref]
-			lf.Images[i].Signature = sig
+			lf.Mirror.Images[i].Signature = sig
 			label := "✗"
 			if sig.Verified {
 				label = "✓"
@@ -74,6 +74,8 @@ Network reads only — no pushes.`,
 			switch sig.Type {
 			case "cosign-keyless":
 				fmt.Fprintf(cmd.OutOrStdout(), "  %s %s  signed: %s\n", label, img.Ref, ident)
+			case "allowlisted":
+				fmt.Fprintf(cmd.OutOrStdout(), "  %s %s  unsigned (allowlisted via mirror.verify.allowUnsigned)\n", label, img.Ref)
 			case "none":
 				fmt.Fprintf(cmd.OutOrStdout(), "  %s %s  unsigned\n", label, img.Ref)
 				unverified++

@@ -75,13 +75,16 @@ func TestDiscoverMirrorDriftLoop(t *testing.T) {
 	// Write chart.json into the test work dir.
 	workDir := t.TempDir()
 	cf := chartfile.File{
-		Upstream: chartfile.Endpoint{
-			Type: chartfile.TypeRepo, Name: "tinychart",
-			URL: repoURL, Version: "0.1.0",
-		},
-		Downstream: chartfile.Endpoint{
-			Type: chartfile.TypeOCI,
-			URL:  "oci://" + registryAddr + "/mirror",
+		APIVersion: chartfile.APIVersion,
+		Mirror: chartfile.Mirror{
+			Upstream: chartfile.Endpoint{
+				Type: chartfile.TypeRepo, Name: "tinychart",
+				URL: repoURL, Version: "0.1.0",
+			},
+			Downstream: chartfile.Endpoint{
+				Type: chartfile.TypeOCI,
+				URL:  "oci://" + registryAddr + "/mirror",
+			},
 		},
 	}
 	writeChartJSON(t, filepath.Join(workDir, "chart.json"), cf)
@@ -154,17 +157,18 @@ func runDiscoverMirror(ctx context.Context, t *testing.T, cf chartfile.File, wor
 	if err != nil && !lockfile.IsNotExist(err) {
 		t.Fatalf("read lockfile: %v", err)
 	}
-	lf.SchemaVersion = lockfile.SchemaVersion
-	lf.Chart = lockfile.Chart{Name: res.ChartName, Version: res.ChartVersion}
-	lf.Upstream.Type = cf.Upstream.Type
-	lf.Upstream.URL = cf.Upstream.URL
-	lf.Upstream.ChartContentDigest = res.ChartContentDigest
+	lf.APIVersion = lockfile.APIVersion
+	lf.Mirror.Chart = lockfile.Chart{Name: res.ChartName, Version: res.ChartVersion}
+	lf.Mirror.Upstream.Type = cf.Mirror.Upstream.Type
+	lf.Mirror.Upstream.URL = cf.Mirror.Upstream.URL
+	lf.Mirror.Upstream.ChartContentDigest = res.ChartContentDigest
 	if res.UpstreamManifestDigest != "" {
-		lf.Upstream.OCIManifestDigest = res.UpstreamManifestDigest
+		lf.Mirror.Upstream.OCIManifestDigest = res.UpstreamManifestDigest
 	}
-	lf.Images = res.Images
+	lf.Mirror.Images = res.Images
 	if lf.Mirror.Tool == "" {
-		lf.Mirror = lockfile.Mirror{Tool: "integration", Timestamp: time.Time{}}
+		lf.Mirror.Tool = "integration"
+		lf.Mirror.Timestamp = time.Time{}
 	}
 	if err := lockfile.Write(lockPath, lf); err != nil {
 		t.Fatalf("write lockfile (post-discover): %v", err)
@@ -185,9 +189,9 @@ func runDiscoverMirror(ctx context.Context, t *testing.T, cf chartfile.File, wor
 		t.Fatalf("mirror.Run: %v", err)
 	}
 
-	mirrorPrefix := strings.TrimPrefix(cf.Downstream.URL, "oci://")
-	inputs := make([]imagemirror.Input, len(lf.Images))
-	for i, img := range lf.Images {
+	mirrorPrefix := strings.TrimPrefix(cf.Mirror.Downstream.URL, "oci://")
+	inputs := make([]imagemirror.Input, len(lf.Mirror.Images))
+	for i, img := range lf.Mirror.Images {
 		inputs[i] = imagemirror.Input{UpstreamRef: img.Ref, UpstreamDigest: img.Digest}
 	}
 	imgResults := imagemirror.Mirror(ctx, inputs, mirrorPrefix)
@@ -195,20 +199,21 @@ func runDiscoverMirror(ctx context.Context, t *testing.T, cf chartfile.File, wor
 		if r.Err != nil {
 			t.Fatalf("imagemirror failed for %s: %v", r.UpstreamRef, r.Err)
 		}
-		lf.Images[i].DownstreamRef = r.DownstreamRef
-		lf.Images[i].DownstreamDigest = r.DownstreamDigest
+		lf.Mirror.Images[i].DownstreamRef = r.DownstreamRef
+		lf.Mirror.Images[i].DownstreamDigest = r.DownstreamDigest
 	}
 
-	lf.Downstream = lockfile.Downstream{
+	lf.Mirror.Downstream = lockfile.Downstream{
 		Ref:               mres.DownstreamRef,
 		OCIManifestDigest: mres.DownstreamManifestDigest,
 	}
-	lf.Mirror = lockfile.Mirror{Tool: "integration", Timestamp: time.Time{}}
+	lf.Mirror.Tool = "integration"
+	lf.Mirror.Timestamp = time.Time{}
 	if err := lockfile.Write(lockPath, lf); err != nil {
 		t.Fatalf("write lockfile (post-mirror): %v", err)
 	}
 
-	return lf.Images, res.MirrorValues
+	return lf.Mirror.Images, res.MirrorValues
 }
 
 // startRegistry runs registry:2 via testcontainers and returns its

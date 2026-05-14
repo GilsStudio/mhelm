@@ -82,9 +82,10 @@ func resolveDigests(cands []candidate) []lockfile.Image {
 			continue
 		}
 		out = append(out, lockfile.Image{
-			Ref:    r.c.Ref,
-			Digest: r.digest,
-			Source: r.c.Source,
+			Ref:           r.c.Ref,
+			Digest:        r.digest,
+			Source:        r.c.Source,
+			DiscoveredVia: r.c.DiscoveredVia,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Ref < out[j].Ref })

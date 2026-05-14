@@ -93,17 +93,17 @@ func Build(cf chartfile.File, lf lockfile.File, dir, mhelmVersion string) Predic
 		},
 	}
 
-	if lf.Upstream.ChartContentDigest != "" {
+	if lf.Mirror.Upstream.ChartContentDigest != "" {
 		p.BuildDefinition.ResolvedDependencies = append(
 			p.BuildDefinition.ResolvedDependencies,
 			ResourceDescriptor{
-				URI:    cf.Upstream.URL,
-				Name:   lf.Chart.Name + "@" + lf.Chart.Version,
-				Digest: digestMap(lf.Upstream.ChartContentDigest),
+				URI:    cf.Mirror.Upstream.URL,
+				Name:   lf.Mirror.Chart.Name + "@" + lf.Mirror.Chart.Version,
+				Digest: digestMap(lf.Mirror.Upstream.ChartContentDigest),
 			},
 		)
 	}
-	for _, img := range lf.Images {
+	for _, img := range lf.Mirror.Images {
 		if img.Digest == "" {
 			continue
 		}

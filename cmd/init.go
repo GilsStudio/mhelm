@@ -56,15 +56,18 @@ directory is used. If <dir> does not exist, it is created.`,
 		}
 
 		f := chartfile.File{
-			Upstream: chartfile.Endpoint{
-				Type:    initUpstreamType,
-				URL:     initUpstreamURL,
-				Name:    initUpstreamName,
-				Version: initUpstreamVersion,
-			},
-			Downstream: chartfile.Endpoint{
-				Type: chartfile.TypeOCI,
-				URL:  initDownstreamURL,
+			APIVersion: chartfile.APIVersion,
+			Mirror: chartfile.Mirror{
+				Upstream: chartfile.Endpoint{
+					Type:    initUpstreamType,
+					URL:     initUpstreamURL,
+					Name:    initUpstreamName,
+					Version: initUpstreamVersion,
+				},
+				Downstream: chartfile.Endpoint{
+					Type: chartfile.TypeOCI,
+					URL:  initDownstreamURL,
+				},
 			},
 		}
 		data, err := json.MarshalIndent(f, "", "  ")

@@ -68,18 +68,18 @@ func Run(ctx context.Context, cf chartfile.File, lf lockfile.File, opts Options)
 // checkChartUpstream re-resolves the upstream chart at the pinned version
 // and compares its content digest against the lockfile.
 func checkChartUpstream(cf chartfile.File, lf lockfile.File) []lockfile.DriftFinding {
-	switch cf.Upstream.Type {
+	switch cf.Mirror.Upstream.Type {
 	case chartfile.TypeRepo:
-		idx, err := loadIndex(cf.Upstream.URL)
+		idx, err := loadIndex(cf.Mirror.Upstream.URL)
 		if err != nil {
 			return nil
 		}
 		return compareChartRepoDigest(idx, cf, lf)
 	case chartfile.TypeOCI:
-		if lf.Upstream.OCIManifestDigest == "" {
+		if lf.Mirror.Upstream.OCIManifestDigest == "" {
 			return nil
 		}
-		ref := strings.TrimPrefix(cf.Upstream.URL, "oci://") + ":" + cf.Upstream.Version
+		ref := strings.TrimPrefix(cf.Mirror.Upstream.URL, "oci://") + ":" + cf.Mirror.Upstream.Version
 		got, err := crane.Digest(ref, craneOpts()...)
 		if err != nil {
 			return nil
@@ -92,22 +92,22 @@ func checkChartUpstream(cf chartfile.File, lf lockfile.File) []lockfile.DriftFin
 // compareChartRepoDigest compares a Helm repo index's reported digest for
 // the pinned chart version against the lockfile. Pure (no network).
 func compareChartRepoDigest(idx *repo.IndexFile, cf chartfile.File, lf lockfile.File) []lockfile.DriftFinding {
-	cv, err := idx.Get(cf.Upstream.Name, cf.Upstream.Version)
+	cv, err := idx.Get(cf.Mirror.Upstream.Name, cf.Mirror.Upstream.Version)
 	if err != nil {
 		return []lockfile.DriftFinding{{
 			Kind:    lockfile.DriftKindUpstreamMissing,
-			Subject: cf.Upstream.Name + "@" + cf.Upstream.Version,
+			Subject: cf.Mirror.Upstream.Name + "@" + cf.Mirror.Upstream.Version,
 			Note:    "upstream index.yaml no longer lists this chart version",
 		}}
 	}
-	expected := strings.TrimPrefix(lf.Upstream.ChartContentDigest, "sha256:")
+	expected := strings.TrimPrefix(lf.Mirror.Upstream.ChartContentDigest, "sha256:")
 	if expected == "" || strings.EqualFold(cv.Digest, expected) {
 		return nil
 	}
 	return []lockfile.DriftFinding{{
 		Kind:     lockfile.DriftKindUpstreamRotation,
-		Subject:  cf.Upstream.Name + "@" + cf.Upstream.Version,
-		Expected: lf.Upstream.ChartContentDigest,
+		Subject:  cf.Mirror.Upstream.Name + "@" + cf.Mirror.Upstream.Version,
+		Expected: lf.Mirror.Upstream.ChartContentDigest,
 		Actual:   "sha256:" + cv.Digest,
 		Note:     "upstream index.yaml now reports a different digest for this chart version",
 	}}
@@ -116,13 +116,13 @@ func compareChartRepoDigest(idx *repo.IndexFile, cf chartfile.File, lf lockfile.
 // compareChartOCIDigest compares an OCI manifest digest against the lockfile.
 // Pure (no network).
 func compareChartOCIDigest(ref, got string, lf lockfile.File) []lockfile.DriftFinding {
-	if got == lf.Upstream.OCIManifestDigest {
+	if got == lf.Mirror.Upstream.OCIManifestDigest {
 		return nil
 	}
 	return []lockfile.DriftFinding{{
 		Kind:     lockfile.DriftKindUpstreamRotation,
 		Subject:  ref,
-		Expected: lf.Upstream.OCIManifestDigest,
+		Expected: lf.Mirror.Upstream.OCIManifestDigest,
 		Actual:   got,
 		Note:     "upstream OCI manifest digest changed under the same tag",
 	}}
@@ -163,8 +163,8 @@ func checkImagesUpstream(lf lockfile.File) []lockfile.DriftFinding {
 		idx int
 		img lockfile.Image
 	}
-	jobs := make([]job, 0, len(lf.Images))
-	for i, img := range lf.Images {
+	jobs := make([]job, 0, len(lf.Mirror.Images))
+	for i, img := range lf.Mirror.Images {
 		if img.Digest == "" {
 			continue
 		}
@@ -189,14 +189,14 @@ func checkImagesUpstream(lf lockfile.File) []lockfile.DriftFinding {
 }
 
 func checkChartDownstream(lf lockfile.File) []lockfile.DriftFinding {
-	if lf.Downstream.Ref == "" || lf.Downstream.OCIManifestDigest == "" {
+	if lf.Mirror.Downstream.Ref == "" || lf.Mirror.Downstream.OCIManifestDigest == "" {
 		return nil
 	}
-	got, err := crane.Digest(lf.Downstream.Ref, craneOpts()...)
+	got, err := crane.Digest(lf.Mirror.Downstream.Ref, craneOpts()...)
 	if err != nil {
 		return nil
 	}
-	return compareChartDownstreamDigest(lf.Downstream.Ref, lf.Downstream.OCIManifestDigest, got)
+	return compareChartDownstreamDigest(lf.Mirror.Downstream.Ref, lf.Mirror.Downstream.OCIManifestDigest, got)
 }
 
 // compareChartDownstreamDigest compares a downstream chart manifest digest
@@ -218,8 +218,8 @@ func checkImagesDownstream(lf lockfile.File) []lockfile.DriftFinding {
 	type job struct {
 		ref, digest string
 	}
-	jobs := make([]job, 0, len(lf.Images))
-	for _, img := range lf.Images {
+	jobs := make([]job, 0, len(lf.Mirror.Images))
+	for _, img := range lf.Mirror.Images {
 		if img.DownstreamRef == "" || img.DownstreamDigest == "" {
 			continue
 		}
@@ -249,17 +249,17 @@ func checkImagesDownstream(lf lockfile.File) []lockfile.DriftFinding {
 // chart upgrades with per-image upgrades.
 func checkNewVersions(cf chartfile.File, lf lockfile.File) []lockfile.DriftFinding {
 	var tags []string
-	switch cf.Upstream.Type {
+	switch cf.Mirror.Upstream.Type {
 	case chartfile.TypeRepo:
-		idx, err := loadIndex(cf.Upstream.URL)
+		idx, err := loadIndex(cf.Mirror.Upstream.URL)
 		if err != nil {
 			return nil
 		}
-		for _, cv := range idx.Entries[cf.Upstream.Name] {
+		for _, cv := range idx.Entries[cf.Mirror.Upstream.Name] {
 			tags = append(tags, cv.Version)
 		}
 	case chartfile.TypeOCI:
-		repoName := strings.TrimPrefix(cf.Upstream.URL, "oci://")
+		repoName := strings.TrimPrefix(cf.Mirror.Upstream.URL, "oci://")
 		t, err := crane.ListTags(repoName, craneOpts()...)
 		if err != nil {
 			return nil
@@ -268,7 +268,7 @@ func checkNewVersions(cf chartfile.File, lf lockfile.File) []lockfile.DriftFindi
 	default:
 		return nil
 	}
-	return compareNewVersions(cf.Upstream.Version, lf.Chart.Name, tags)
+	return compareNewVersions(cf.Mirror.Upstream.Version, lf.Mirror.Chart.Name, tags)
 }
 
 // compareNewVersions filters tags for valid, non-prerelease semvers higher

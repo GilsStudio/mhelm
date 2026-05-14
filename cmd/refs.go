@@ -62,12 +62,12 @@ upstream OCI artifact exists to copy from).`,
 		}
 
 		if !refsImagesOnly {
-			if r := digestForm(lf.Downstream.Ref, lf.Downstream.OCIManifestDigest); r != "" {
+			if r := digestForm(lf.Mirror.Downstream.Ref, lf.Mirror.Downstream.OCIManifestDigest); r != "" {
 				fmt.Fprintln(cmd.OutOrStdout(), r)
 			}
 		}
 		if !refsChartOnly {
-			for _, img := range lf.Images {
+			for _, img := range lf.Mirror.Images {
 				if r := digestForm(img.DownstreamRef, img.DownstreamDigest); r != "" {
 					fmt.Fprintln(cmd.OutOrStdout(), r)
 				}
@@ -78,16 +78,16 @@ upstream OCI artifact exists to copy from).`,
 }
 
 func printUpstreamPairs(w stringWriter, cf chartfile.File, lf lockfile.File) error {
-	if !refsImagesOnly && cf.Upstream.Type == chartfile.TypeOCI {
-		upstreamRef := strings.TrimPrefix(cf.Upstream.URL, "oci://") + ":" + cf.Upstream.Version
-		up := digestForm(upstreamRef, lf.Upstream.OCIManifestDigest)
-		down := digestForm(lf.Downstream.Ref, lf.Downstream.OCIManifestDigest)
+	if !refsImagesOnly && cf.Mirror.Upstream.Type == chartfile.TypeOCI {
+		upstreamRef := strings.TrimPrefix(cf.Mirror.Upstream.URL, "oci://") + ":" + cf.Mirror.Upstream.Version
+		up := digestForm(upstreamRef, lf.Mirror.Upstream.OCIManifestDigest)
+		down := digestForm(lf.Mirror.Downstream.Ref, lf.Mirror.Downstream.OCIManifestDigest)
 		if up != "" && down != "" {
 			fmt.Fprintf(w, "%s\t%s\n", up, down)
 		}
 	}
 	if !refsChartOnly {
-		for _, img := range lf.Images {
+		for _, img := range lf.Mirror.Images {
 			up := digestForm(img.Ref, img.Digest)
 			down := digestForm(img.DownstreamRef, img.DownstreamDigest)
 			if up == "" || down == "" {

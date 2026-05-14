@@ -32,24 +32,30 @@ func clearGHAEnv(t *testing.T) {
 
 func canonicalInputs() (chartfile.File, lockfile.File) {
 	cf := chartfile.File{
-		Upstream: chartfile.Endpoint{
-			Type: chartfile.TypeRepo, Name: "tinychart",
-			URL: "https://example.com/charts", Version: "0.1.0",
+		APIVersion: chartfile.APIVersion,
+		Mirror: chartfile.Mirror{
+			Upstream: chartfile.Endpoint{
+				Type: chartfile.TypeRepo, Name: "tinychart",
+				URL: "https://example.com/charts", Version: "0.1.0",
+			},
+			Downstream: chartfile.Endpoint{Type: chartfile.TypeOCI, URL: "oci://ghcr.io/mirror/tinychart"},
 		},
-		Downstream: chartfile.Endpoint{Type: chartfile.TypeOCI, URL: "oci://ghcr.io/mirror/tinychart"},
 	}
 	lf := lockfile.File{
-		Chart: lockfile.Chart{Name: "tinychart", Version: "0.1.0"},
-		Upstream: lockfile.Upstream{
-			Type: "repo",
-			URL:  "https://example.com/charts",
-			ChartContentDigest: "sha256:0123456789abcdef0123456789abcdef" +
-				"0123456789abcdef0123456789abcdef",
-		},
-		Images: []lockfile.Image{
-			{
-				Ref:    "registry.io/app:1",
-				Digest: "sha256:abcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabca",
+		APIVersion: lockfile.APIVersion,
+		Mirror: lockfile.MirrorBlock{
+			Chart: lockfile.Chart{Name: "tinychart", Version: "0.1.0"},
+			Upstream: lockfile.Upstream{
+				Type: "repo",
+				URL:  "https://example.com/charts",
+				ChartContentDigest: "sha256:0123456789abcdef0123456789abcdef" +
+					"0123456789abcdef0123456789abcdef",
+			},
+			Images: []lockfile.Image{
+				{
+					Ref:    "registry.io/app:1",
+					Digest: "sha256:abcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabca",
+				},
 			},
 		},
 	}

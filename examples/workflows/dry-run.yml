@@ -1,0 +1,50 @@
+# PR gate: dry-run every chart's mirror without writing, signing, or pushing.
+#
+# Runs the mhelm action in `command: dry-run` mode — `mhelm discover --check`
+# + `mhelm verify`. A stale committed chart-lock.json / image-values.yaml
+# fails the check, forcing the PR author to re-run `mhelm discover` locally
+# and commit the result before merge. No registry writes, no cosign signing,
+# no commits — `contents: read` is all that's needed.
+#
+# This is the CI counterpart of the local `mhelm discover --check` step.
+
+name: Dry-run (PR gate)
+
+on:
+  pull_request:
+    paths:
+      - 'platform/**'
+      - '.github/workflows/dry-run.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  dry-run:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      # Static matrix mirrors mirror.yml/drift.yml. Every chart is
+      # re-checked on every PR; scope with dorny/paths-filter if that
+      # becomes too slow.
+      matrix:
+        chart:
+          - platform/cert-manager
+          - platform/cilium
+          - platform/rook-ceph
+          - platform/rook-ceph-cluster
+          - platform/argocd
+          - platform/cnpg
+    steps:
+      - uses: actions/checkout@v4
+
+      # No registry login: discover only *reads* the upstream chart and
+      # verify only hits public Fulcio/Rekor. Add docker/login-action here
+      # if your upstream chart or images require pull credentials.
+      - name: mhelm dry-run
+        uses: gilsstudio/mhelm@v0.4.0
+        with:
+          dir: ${{ matrix.chart }}
+          command: dry-run
+          # Set 'true' to also fail the PR on any unverified upstream image.
+          strict-verify: 'false'

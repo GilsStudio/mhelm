@@ -16,13 +16,17 @@
 #   2. Logs in to GHCR (or whichever registry chart.json#downstream.url points at).
 #   3. Runs the mhelm composite action, which discovers → verifies → mirrors →
 #      cosign-signs + attests every artifact.
-#   4. Optionally commits updated chart-lock.json / image-values.yaml /
-#      mirror-provenance.json back to the repo as a PR.
+#   4. Opens a PR with the updated chart-lock.json / image-values.yaml /
+#      mirror-provenance.json — review the digest diff, then merge to record
+#      the mirror in git (consistent with drift.yml and the
+#      "every change is a reviewable PR" model).
 
 name: Mirror Helm charts
 
 on:
   push:
+    branches:
+      - main          # only the default branch performs real (signed) mirrors
     paths:
       - 'platform/**/chart.json'
       - '.github/workflows/mirror.yml'
@@ -30,9 +34,10 @@ on:
 
 # These permissions are required by the mhelm action when sign=true (the default).
 permissions:
-  contents: write   # so the optional "commit lockfile updates" step can push
-  packages: write   # push to ghcr.io
-  id-token: write   # cosign keyless via OIDC → Fulcio → Rekor
+  contents: write        # create-pull-request pushes the lockfile branch
+  pull-requests: write   # ...and opens the PR with the lockfile updates
+  packages: write        # push chart + images to ghcr.io
+  id-token: write        # cosign keyless via OIDC → Fulcio → Rekor
 
 jobs:
   mirror:
@@ -67,11 +72,20 @@ jobs:
           # Set to "true" to fail the job when an upstream image is unsigned.
           strict-verify: 'false'
 
-      - name: Commit lockfile updates
-        uses: stefanzweifel/git-auto-commit-action@v5
+      - name: Open PR with lockfile updates
+        uses: peter-evans/create-pull-request@v6
         with:
-          file_pattern: |
+          branch: mirror/${{ matrix.chart }}
+          title: 'chore(mirror): update lockfile for ${{ matrix.chart }}'
+          commit-message: 'chore(mirror): update lockfile for ${{ matrix.chart }}'
+          add-paths: |
             ${{ matrix.chart }}/chart-lock.json
             ${{ matrix.chart }}/image-values.yaml
             ${{ matrix.chart }}/mirror-provenance.json
-          commit_message: 'chore(mirror): update lockfile for ${{ matrix.chart }}'
+          body: |
+            Automated mirror refreshed the pinned digests / downstream refs
+            for `${{ matrix.chart }}`.
+
+            Review the `chart-lock.json` diff — every changed digest is a
+            real upstream or downstream content change. Merging records the
+            mirror operation in git (the lockfile is the source of truth).

@@ -65,9 +65,9 @@ LAPTOP — read-only, no credentials          CI — writes + signs (OIDC)
 
 4. **Sanity-check** — `mhelm discover --check platform/cilium` must exit `0`. This is the exact gate CI enforces; exit `2` means the lockfile is stale — re-run step 3. Optionally `mhelm verify platform/cilium` to inspect upstream signature posture before pushing.
 
-5. **Commit + open a PR** — commit `chart.json`, `chart-lock.json`, `image-values.yaml`. Gate the PR with the Action in **`dry-run`** mode (`command: dry-run` → `discover --check` + `verify`, no writes/signing/commit): a stale lockfile fails the check, forcing fresh discover output before merge. This is the CI counterpart of step 4 — wire it as a `pull_request` workflow (the shipped examples are push/schedule only; see *Wire CI* below).
+5. **Commit + open a PR** — commit `chart.json`, `chart-lock.json`, `image-values.yaml`. Gate the PR with the Action in **`dry-run`** mode (`command: dry-run` → `discover --check` + `verify`, no writes/signing/commit): a stale lockfile fails the check, forcing fresh discover output before merge. This is the CI counterpart of step 4, wired by [`dry-run.yml`](examples/workflows/dry-run.yml).
 
-6. **Land it → CI mirrors.** When the `chart.json` change lands on your default branch, [`mirror.yml`](examples/workflows/mirror.yml) (a `platform/**/chart.json` matrix) runs the full pipeline — discover → verify → mirror → wrap → provenance → slsa → cosign sign + attest (SBOM / vuln / SLSA / MirrorProvenance) — pushes chart + every image to your downstream registry, and auto-commits the updated `chart-lock.json` / `image-values.yaml` / `mirror-provenance.json` back. Details: [Canonical CI sequence](#canonical-ci-sequence), [GitHub Action](#github-action).
+6. **Land it → CI mirrors.** When the `chart.json` change lands on your default branch, [`mirror.yml`](examples/workflows/mirror.yml) (a `platform/**/chart.json` matrix) runs the full pipeline — discover → verify → mirror → wrap → provenance → slsa → cosign sign + attest (SBOM / vuln / SLSA / MirrorProvenance) — pushes chart + every image to your downstream registry, then opens a PR with the updated `chart-lock.json` / `image-values.yaml` / `mirror-provenance.json` (review the digest diff, merge to record the mirror in git). Details: [Canonical CI sequence](#canonical-ci-sequence), [GitHub Action](#github-action).
 
 7. **Ongoing drift.** [`drift.yml`](examples/workflows/drift.yml) runs nightly and opens a PR per chart on upstream rotation, downstream tampering, or a new upstream version. Review it, bump `mirror.upstream.version`, and the loop returns to step 3.
 
@@ -77,7 +77,7 @@ LAPTOP — read-only, no credentials          CI — writes + signs (OIDC)
    mhelm release print-install platform/cilium | bash
    ```
 
-**Wire CI:** copy [`examples/workflows/mirror.yml`](examples/workflows/mirror.yml) and [`examples/workflows/drift.yml`](examples/workflows/drift.yml) into `.github/workflows/`, then adjust the chart matrix and `downstream.url`. For the step-5 PR gate, add a third `pull_request`-triggered workflow that runs the Action with `command: dry-run` (no shipped example yet). Steps 1–5 are the only human loop; everything after the change lands is automated and auditable as git diffs.
+**Wire CI:** copy [`dry-run.yml`](examples/workflows/dry-run.yml) (the step-5 PR gate), [`mirror.yml`](examples/workflows/mirror.yml), and [`drift.yml`](examples/workflows/drift.yml) from [`examples/workflows/`](examples/workflows/) into `.github/workflows/`, then adjust the chart matrix and `downstream.url`. Steps 1–5 are the only human loop; everything after the change lands is automated and auditable as git diffs.
 
 ## Files
 

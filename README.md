@@ -175,7 +175,7 @@ mhelm release init [dir]       scaffold the chart.json release section
 mhelm release print-install [dir]  emit a runnable `helm upgrade --install` against the locked artifact
 mhelm provenance [dir]         write mirror-provenance.json (custom MirrorProvenance predicate)
 mhelm slsa [dir]               write slsa-provenance.json (SLSA v1 build provenance predicate)
-mhelm vuln-gate [dir]          apply chart.json#mirror.vulnPolicy to a grype cosign-vuln report
+mhelm vuln-gate [dir]          apply chart.json#mirror.vulnPolicy to a cosign vuln/v1 report
 mhelm refs [dir]               print downstream ref@digest lines (--with-upstream pairs, --json, --chart-only, --images-only)
 mhelm drift [dir]              detect upstream rotation, downstream tampering, new upstream versions
 mhelm version                  print the mhelm version (git-tag derived)
@@ -270,7 +270,7 @@ When `sign=true`, **every** downstream artifact (the mirrored chart, the optiona
 **Images additionally** get:
 
 5. **CycloneDX SBOM** — `syft <ref>` → `cosign attest --type cyclonedx`.
-6. **Vulnerability report** — `grype -o cosign-vuln` → `cosign attest --type vuln` (cosign vuln/v1 schema), gated by `chart.json#mirror.vulnPolicy` before attesting.
+6. **Vulnerability report** — `grype -o template -t cosign-vuln.tmpl` → `cosign attest --type vuln` (cosign vuln/v1 schema), gated by `chart.json#mirror.vulnPolicy` before attesting.
 
 The chart and wrapper are Helm OCI artifacts (`application/vnd.cncf.helm.*` media types) that syft/grype cannot catalog, so they receive signature + SLSA + MirrorProvenance only — there is no package SBOM for a chart's templated YAML.
 

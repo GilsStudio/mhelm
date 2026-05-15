@@ -96,13 +96,21 @@ runs:
       with:
         cosign-release: ${{ inputs.cosign-version }}
 
+    # syft/grype are pinned: a supply-chain tool must not let its own
+    # scanners drift. Bump deliberately, in lockstep with cosign-vuln.tmpl
+    # (the template consumes grype's models.Document — a field rename
+    # there would silently change the attested predicate).
     - name: Install syft
       if: inputs.command == 'mirror' && inputs.sign == 'true'
       uses: anchore/sbom-action/download-syft@v0
+      with:
+        syft-version: v1.44.0
 
     - name: Install grype
       if: inputs.command == 'mirror' && inputs.sign == 'true'
       uses: anchore/scan-action/download-grype@v3
+      with:
+        grype-version: v0.112.0
 
     - name: mhelm discover
       if: inputs.command == 'mirror' || inputs.command == 'dry-run'
@@ -252,8 +260,11 @@ runs:
           syft "$REF" -o "cyclonedx-json=$SBOM"
           cosign attest --yes --predicate "$SBOM" --type cyclonedx "$REF"
 
-          # 3. Vulnerability report in cosign vuln/v1 schema (grype's native output).
-          grype "sbom:$SBOM" -o cosign-vuln --file "$VULN"
+          # 3. Vulnerability report in cosign vuln/v1 schema. Grype dropped
+          # its built-in cosign-vuln format; -o template with the bundled
+          # cosign-vuln.tmpl is the supported replacement (renders the same
+          # predicate cosign attest --type vuln and mhelm vuln-gate expect).
+          grype "sbom:$SBOM" -o template -t "$GITHUB_ACTION_PATH/cosign-vuln.tmpl" --file "$VULN"
           # Apply chart.json#mirror.vulnPolicy before attesting — fail the run
           # rather than sign-and-attest a known-bad image.
           mhelm vuln-gate --vuln-file "$VULN" --image "$REF" "$DIR"

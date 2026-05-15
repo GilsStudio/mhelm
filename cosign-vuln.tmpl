@@ -1,0 +1,32 @@
+{{- /*
+  Renders grype results as a Cosign vulnerability attestation predicate
+  (https://cosign.sigstore.dev/attestation/vuln/v1), the schema cosign's
+  `attest --type vuln` expects and `mhelm vuln-gate` parses.
+
+  Grype dropped the built-in `cosign-vuln` output format; `-o template`
+  with this file is the supported replacement. The full grype document
+  is embedded verbatim under .scanner.result, so .scanner.result.matches[]
+  carries every match (mhelm vuln-gate reads .vulnerability.{id,severity}).
+
+  Root context (.) is grype's models.Document. Grype's template engine
+  is sprig HermeticTxtFuncMap (no now/date/env) plus getLastIndex, so
+  timestamps come from grype's own .Descriptor.Timestamp, not now.
+*/ -}}
+{
+  "invocation": {
+    "parameters": null,
+    "uri": "",
+    "event_id": "",
+    "builder.id": ""
+  },
+  "scanner": {
+    "uri": "pkg:github/anchore/grype",
+    "version": "{{ .Descriptor.Version }}",
+    "db": {{ if .Descriptor.DB }}{{ .Descriptor.DB | toJson }}{{ else }}{}{{ end }},
+    "result": {{ . | toJson }}
+  },
+  "metadata": {
+    "scanStartedOn": "{{ .Descriptor.Timestamp | default "1970-01-01T00:00:00Z" }}",
+    "scanFinishedOn": "{{ .Descriptor.Timestamp | default "1970-01-01T00:00:00Z" }}"
+  }
+}

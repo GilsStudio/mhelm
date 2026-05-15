@@ -191,15 +191,26 @@ func HexFromDigest(d string) string {
 	return strings.TrimPrefix(d, "sha256:")
 }
 
-func Write(path string, f File) error {
+// Marshal renders the canonical on-disk bytes for f (apiVersion defaulted,
+// 2-space indent, trailing newline). Deterministic — Write delegates to it
+// so `discover --check` can byte-compare without reimplementing the format.
+func Marshal(f File) ([]byte, error) {
 	if f.APIVersion == "" {
 		f.APIVersion = APIVersion
 	}
 	data, err := json.MarshalIndent(f, "", "  ")
 	if err != nil {
+		return nil, err
+	}
+	return append(data, '\n'), nil
+}
+
+func Write(path string, f File) error {
+	data, err := Marshal(f)
+	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(data, '\n'), 0o644)
+	return os.WriteFile(path, data, 0o644)
 }
 
 // Read loads an existing chart-lock.json, transparently migrating

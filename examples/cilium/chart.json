@@ -11,12 +11,18 @@
       "url": "oci://ghcr.io/myorg/mirror"
     },
     "discoveryValues": [
-      "mirror-discovery.yml"
+      "helm/values.yml"
     ],
     "extraImages": [
       {
         "ref": "quay.io/cilium/cilium-cli:v0.18.0",
         "reason": "operator-managed; pulled at runtime by the cilium-cli CRD reconciler"
+      },
+      {
+        "ref": "quay.io/cilium/operator-generic:v1.19.3",
+        "valuesPath": "operator.image",
+        "overridePath": "operator.image.override",
+        "reason": "operator image is <repo>-generic with a per-cloud genericDigest; valuesPath maps it, overridePath bypasses the chart's suffix concatenation"
       }
     ],
     "verify": {
@@ -45,7 +51,7 @@
     "name":    "cilium-wrapped",
     "version": "1.19.3-myorg.1",
     "valuesFiles": [
-      "values.yml"
+      "helm/values.yml"
     ],
     "extraManifests": [
       "k8s/l2-announcement-policy.yml"

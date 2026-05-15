@@ -76,6 +76,9 @@ directory is used. If <dir> does not exist, it is created.`,
 					Type: chartfile.TypeOCI,
 					URL:  initDownstreamURL,
 				},
+				// Convention: all helm value files live in helm/ next to
+				// chart.json (see README "Recommended layout").
+				DiscoveryValues: []string{"helm/values.yml"},
 			},
 		}
 		data, err := json.MarshalIndent(f, "", "  ")
@@ -86,6 +89,23 @@ directory is used. If <dir> does not exist, it is created.`,
 			return err
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "wrote %s\n", out)
+
+		// Scaffold the helm/ values stub so adopters fall into the
+		// recommended layout without reading the docs first.
+		helmDir := filepath.Join(dir, "helm")
+		if err := os.MkdirAll(helmDir, 0o755); err != nil {
+			return fmt.Errorf("create %s: %w", helmDir, err)
+		}
+		valuesStub := filepath.Join(helmDir, "values.yml")
+		if _, err := os.Stat(valuesStub); os.IsNotExist(err) {
+			stub := "# Helm values overlaid during `mhelm discover` so rendered\n" +
+				"# manifests match what you'll deploy. Also referenced by\n" +
+				"# wrap.valuesFiles / release.valuesFiles when used.\n"
+			if err := os.WriteFile(valuesStub, []byte(stub), 0o644); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "wrote %s\n", valuesStub)
+		}
 		return nil
 	},
 }

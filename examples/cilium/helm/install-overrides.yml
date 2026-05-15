@@ -1,0 +1,5 @@
+# Opt-in overlay applied only at `mhelm release print-install` time
+# (helm upgrade --install --values helm/install-overrides.yml). Use for
+# environment-specific knobs you don't want influencing image discovery.
+operator:
+  replicas: 2

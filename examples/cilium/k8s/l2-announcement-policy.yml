@@ -1,0 +1,11 @@
+# Raw manifest bundled into the wrapper chart via wrap.extraManifests
+# (not a Helm values file — kept under k8s/, not helm/).
+apiVersion: cilium.io/v2alpha1
+kind: CiliumL2AnnouncementPolicy
+metadata:
+  name: default-l2-announcement
+spec:
+  interfaces:
+    - ^eth[0-9]+
+  externalIPs: true
+  loadBalancerIPs: true

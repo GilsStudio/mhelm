@@ -1,0 +1,8 @@
+# Helm values overlaid during `mhelm discover` so the rendered cilium
+# manifests match what you'll actually deploy (and are reused by
+# wrap.valuesFiles). Keep deploy-shaping values here.
+hubble:
+  relay:
+    enabled: true
+  ui:
+    enabled: true

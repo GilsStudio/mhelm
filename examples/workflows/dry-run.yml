@@ -42,7 +42,7 @@ jobs:
       # verify only hits public Fulcio/Rekor. Add docker/login-action here
       # if your upstream chart or images require pull credentials.
       - name: mhelm dry-run
-        uses: gilsstudio/mhelm@v0.5.0
+        uses: gilsstudio/mhelm@v0.6.0
         with:
           dir: ${{ matrix.chart }}
           command: dry-run

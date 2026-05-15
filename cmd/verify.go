@@ -25,8 +25,15 @@ image ref for a cosign signature against sigstore public-good trust roots
 When chart.json#trustedIdentities is set, only signatures whose subject +
 issuer match the allowlist are accepted; others are recorded as unverified.
 
+An image whose signature could not be checked because the sigstore trust
+roots or the registry were unreachable (air-gapped CI, blocked egress) is
+recorded as type "unreachable" — distinct from "none" (verification ran;
+genuinely no signature). Both count as unverified.
+
 Default exit code is 0 regardless of signature outcomes — the lockfile diff
-is the audit. Use --strict to fail on any unverified image.
+is the audit. Use --strict to fail on any unverified image (--strict also
+fails on "unreachable"; an air-gapped runner must provide offline trust
+roots or accept the failure).
 
 Network reads only — no pushes.`,
 	Args: cobra.MaximumNArgs(1),
@@ -59,7 +66,7 @@ Network reads only — no pushes.`,
 			return err
 		}
 
-		var unverified int
+		var unverified, signed, noneCount, unreachableCount, errCount int
 		for i, img := range lf.Mirror.Images {
 			sig := res.Images[img.Ref]
 			lf.Mirror.Images[i].Signature = sig
@@ -73,17 +80,26 @@ Network reads only — no pushes.`,
 			}
 			switch sig.Type {
 			case "cosign-keyless":
+				signed++
 				fmt.Fprintf(cmd.OutOrStdout(), "  %s %s  signed: %s\n", label, img.Ref, ident)
 			case "allowlisted":
 				fmt.Fprintf(cmd.OutOrStdout(), "  %s %s  unsigned (allowlisted via mirror.verify.allowUnsigned)\n", label, img.Ref)
 			case "none":
+				noneCount++
+				unverified++
 				fmt.Fprintf(cmd.OutOrStdout(), "  %s %s  unsigned\n", label, img.Ref)
+			case "unreachable":
+				unreachableCount++
 				unverified++
+				fmt.Fprintf(cmd.OutOrStdout(), "  %s %s  could not verify (trust root / registry unreachable): %s\n", label, img.Ref, sig.Error)
 			case "error":
-				fmt.Fprintf(cmd.OutOrStdout(), "  %s %s  verify error: %s\n", label, img.Ref, sig.Error)
+				errCount++
 				unverified++
+				fmt.Fprintf(cmd.OutOrStdout(), "  %s %s  verify error: %s\n", label, img.Ref, sig.Error)
 			}
 		}
+		fmt.Fprintf(cmd.OutOrStdout(), "summary: %d signed, %d unsigned, %d unreachable, %d error\n",
+			signed, noneCount, unreachableCount, errCount)
 
 		if err := lockfile.Write(lockPath, lf); err != nil {
 			return fmt.Errorf("write %s: %w", lockPath, err)
@@ -91,7 +107,8 @@ Network reads only — no pushes.`,
 		fmt.Fprintf(cmd.OutOrStdout(), "lockfile: %s\n", lockPath)
 
 		if verifyStrict && unverified > 0 {
-			return fmt.Errorf("%d image(s) unverified (--strict)", unverified)
+			return fmt.Errorf("%d image(s) unverified (--strict): %d unsigned, %d unreachable, %d error",
+				unverified, noneCount, unreachableCount, errCount)
 		}
 		return nil
 	},

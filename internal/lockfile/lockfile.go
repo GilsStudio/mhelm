@@ -155,14 +155,18 @@ type Signature struct {
 	// explicitly allowlisted via mirror.verify.allowUnsigned (in which
 	// case Allowlisted is also true and Type == "allowlisted").
 	Verified bool `json:"verified"`
-	// Type: "cosign-keyless" | "cosign-key" | "none" | "error" | "allowlisted".
+	// Type: "cosign-keyless" | "cosign-key" | "none" | "unreachable" |
+	// "error" | "allowlisted". "unreachable" means verification could not
+	// complete (trust roots or registry unreachable) — distinct from
+	// "none" (verification ran; genuinely no signature).
 	Type string `json:"type"`
 	// Subject / Issuer: the OIDC identity from the Fulcio cert (keyless).
 	Subject string `json:"subject,omitempty"`
 	Issuer  string `json:"issuer,omitempty"`
 	// RekorLogIndex: transparency log entry index for audit.
 	RekorLogIndex int64 `json:"rekorLogIndex,omitempty"`
-	// Error: non-empty when Type == "error".
+	// Error: non-empty when Type == "error" or "unreachable" (carries the
+	// underlying cause for triage).
 	Error string `json:"error,omitempty"`
 	// Allowlisted is true when the image matched mirror.verify.allowUnsigned.
 	// The original signature outcome (if any was attempted) is dropped —

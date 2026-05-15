@@ -1,6 +1,6 @@
 # mhelm
 
-**mhelm = Mirror HELM.** A supply-chain-secure mirror for a single Helm chart plus every container image it references. The CLI scaffolds and prepares; a GitHub Action runs the actual mirror, signs every artifact, and attaches SBOM / vuln / SLSA / MirrorProvenance attestations.
+**mhelm = Mirror HELM.** A supply-chain-secure mirror for a single Helm chart plus every container image it references. The CLI scaffolds and prepares; a GitHub Action runs the actual mirror, signs every artifact, attaches SLSA + MirrorProvenance to all of them, and SBOM + vuln scans to the images.
 
 ## Why
 
@@ -10,7 +10,7 @@ Mirroring a chart isn't just copying a `.tgz`. A real platform mirror needs:
 - the override values that point a `helm install` at the mirror,
 - upstream signatures verified before copying,
 - downstream artifacts re-signed with your CI identity,
-- per-artifact SBOM + vuln scan + SLSA build provenance + a custom attestation tying the whole operation together,
+- SLSA build provenance + a custom MirrorProvenance attestation on every artifact, plus an SBOM + vuln scan per mirrored image,
 - continuous drift detection against upstream rotation and downstream tampering.
 
 mhelm does all of this with the lockfile (`chart-lock.json`) as the source of truth in git — every change is a reviewable PR.
@@ -260,14 +260,19 @@ Outputs: `lockfile`, `mirror-values` (path to the generated `image-values.yaml`;
 
 ### Per-artifact attestation chain
 
-When `sign=true`, every downstream artifact (chart + each image) gets:
+When `sign=true`, **every** downstream artifact (the mirrored chart, the optional wrapper chart, and every image) gets:
 
 1. **cosign signature** — keyless via Fulcio + Rekor (ambient GHA OIDC).
 2. **Forwarded upstream attestations** — `cosign copy --force` from upstream registry, best-effort.
-3. **CycloneDX SBOM** — `syft <ref>` → `cosign attest --type cyclonedx`.
-4. **Vulnerability report** — `grype -o cosign-vuln` → `cosign attest --type vuln` (cosign vuln/v1 schema).
-5. **SLSA v1 build provenance** — from `slsa-provenance.json` → `cosign attest --type slsaprovenance1`.
-6. **MirrorProvenance** — from `mirror-provenance.json` → `cosign attest --type https://mhelm.dev/MirrorProvenance/v1`.
+3. **SLSA v1 build provenance** — from `slsa-provenance.json` → `cosign attest --type slsaprovenance1`.
+4. **MirrorProvenance** — from `mirror-provenance.json` → `cosign attest --type https://mhelm.dev/MirrorProvenance/v1`.
+
+**Images additionally** get:
+
+5. **CycloneDX SBOM** — `syft <ref>` → `cosign attest --type cyclonedx`.
+6. **Vulnerability report** — `grype -o cosign-vuln` → `cosign attest --type vuln` (cosign vuln/v1 schema), gated by `chart.json#mirror.vulnPolicy` before attesting.
+
+The chart and wrapper are Helm OCI artifacts (`application/vnd.cncf.helm.*` media types) that syft/grype cannot catalog, so they receive signature + SLSA + MirrorProvenance only — there is no package SBOM for a chart's templated YAML.
 
 All attestations are stored as OCI referrers keyed on the artifact's manifest digest and logged to Rekor.
 

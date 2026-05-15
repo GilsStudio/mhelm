@@ -75,6 +75,12 @@ func TestValidate(t *testing.T) {
 				Allowlist: []VulnWaiver{{CVE: "CVE-2024-1", Expires: "2030-01-01", Reason: "tracked"}},
 			}
 		}, ""},
+		{"extra-image-override-equals-valuespath", func(f *File) {
+			f.Mirror.ExtraImages = []ExtraImage{{Ref: "r/a:1", ValuesPath: "x.image", OverridePath: "x.image"}}
+		}, "overridePath must differ from valuesPath"},
+		{"extra-image-override-only-ok", func(f *File) {
+			f.Mirror.ExtraImages = []ExtraImage{{Ref: "r/a:1", OverridePath: "x.image.override"}}
+		}, ""},
 		{"apiversion-invalid", func(f *File) { f.APIVersion = "mhelm.io/v999" }, `apiVersion "mhelm.io/v999" invalid`},
 	}
 	for _, tc := range cases {

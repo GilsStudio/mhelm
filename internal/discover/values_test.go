@@ -4,6 +4,7 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/gilsstudio/mhelm/internal/lockfile"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 )
@@ -176,6 +177,61 @@ func TestMatchCandidates(t *testing.T) {
 		if diff := cmp.Diff(want, paths, cmpopts.EquateEmpty()); diff != "" {
 			t.Errorf("paths for %q (-want +got):\n%s", ref, diff)
 		}
+	}
+}
+
+func TestMatchCandidates_SuffixFallback(t *testing.T) {
+	candidates := []imageCandidate{
+		{Path: "operator.image", Ref: "quay.io/cilium/operator"},
+	}
+	got := matchCandidates([]string{
+		"quay.io/cilium/operator-generic:v1.19.3", // suffix-extends → match
+		"quay.io/cilium/unrelated:1",              // no relation → no match
+	}, candidates)
+
+	g := got["quay.io/cilium/operator-generic:v1.19.3"]
+	if len(g) != 1 || g[0].Path != "operator.image" || g[0].Accuracy != lockfile.AccuracySuffix {
+		t.Errorf("operator-generic match = %+v, want one operator.image @ suffix-heuristic", g)
+	}
+	if len(got["quay.io/cilium/unrelated:1"]) != 0 {
+		t.Errorf("unrelated should not match: %+v", got["quay.io/cilium/unrelated:1"])
+	}
+}
+
+func TestSuffixExtends(t *testing.T) {
+	cases := []struct {
+		cr, ir string
+		want   bool
+	}{
+		{"quay.io/cilium/operator", "quay.io/cilium/operator-generic", true},
+		{"quay.io/cilium/operator", "quay.io/cilium/operator", false},   // equal
+		{"quay.io/cilium/operator", "quay.io/cilium/operatorx", false},  // no hyphen
+		{"quay.io/cilium/operator", "quay.io/cilium/operator-", false},  // empty token
+		{"quay.io/cilium/operator", "quay.io/other/operator-generic", false}, // parent differs
+		{"a.io/x/op", "b.io/x/op-generic", false},                       // registry differs
+	}
+	for _, c := range cases {
+		if got := suffixExtends(c.cr, c.ir); got != c.want {
+			t.Errorf("suffixExtends(%q,%q) = %v, want %v", c.cr, c.ir, got, c.want)
+		}
+	}
+}
+
+func TestMergeKey(t *testing.T) {
+	cases := []struct{ ref, want string }{
+		{"quay.io/cilium/operator-generic:v1.19.3", "quay.io/cilium/operator-generic:v1.19.3"},
+		{"quay.io/cilium/operator-generic:v1.19.3@sha256:abc", "quay.io/cilium/operator-generic:v1.19.3"},
+		{"quay.io/cilium/cilium@sha256:xyz", "quay.io/cilium/cilium"},
+		{"not a ref", "not a ref"},
+	}
+	for _, c := range cases {
+		if got := mergeKey(c.ref); got != c.want {
+			t.Errorf("mergeKey(%q) = %q, want %q", c.ref, got, c.want)
+		}
+	}
+	// operator and operator-generic must NOT collapse.
+	if mergeKey("quay.io/cilium/operator:v1") == mergeKey("quay.io/cilium/operator-generic:v1") {
+		t.Error("operator and operator-generic collapsed — must stay distinct")
 	}
 }
 

@@ -110,7 +110,11 @@ func (w VulnWaiver) ExpiresTime() (time.Time, error) {
 type ExtraImage struct {
 	Ref        string `json:"ref"`
 	ValuesPath string `json:"valuesPath,omitempty"`
-	Reason     string `json:"reason,omitempty"`
+	// OverridePath, when set, additionally emits the whole pinned ref as
+	// a single string at that path (e.g. cilium's `image.override`) so a
+	// chart can bypass its own per-cloud suffix concatenation.
+	OverridePath string `json:"overridePath,omitempty"`
+	Reason       string `json:"reason,omitempty"`
 }
 
 // Release is the deploy-time ergonomics surface — used by
@@ -260,6 +264,9 @@ func (f File) Validate() error {
 	for i, e := range f.Mirror.ExtraImages {
 		if e.Ref == "" {
 			return fmt.Errorf("mirror.extraImages[%d].ref is required", i)
+		}
+		if e.OverridePath != "" && e.OverridePath == e.ValuesPath {
+			return fmt.Errorf("mirror.extraImages[%d]: overridePath must differ from valuesPath", i)
 		}
 	}
 	if f.Wrap != nil {

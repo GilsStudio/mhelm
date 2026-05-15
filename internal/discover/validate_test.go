@@ -67,12 +67,12 @@ func TestMergeCandidates(t *testing.T) {
 	})
 
 	t.Run("trusted-set-when-trusted-candidate-arrives-first", func(t *testing.T) {
-		// Trusted arrives first, then an untrusted lower-rank source
-		// overwrites the entry — the merged Trusted bit survives because
-		// the loop re-asserts it whenever the current candidate is trusted,
-		// not whenever the overwriting candidate is trusted. Here the
-		// overwriter is untrusted, so the OR-logic only holds if the
-		// implementation re-merges on overwrite.
+		// Trusted manual arrives first, then a higher-trust untrusted
+		// manifest collapses onto it (same canonical identity). The
+		// merged row keeps the manifest source AND Trusted=true: the
+		// trusted bit is now the OR of all contributors, fixing the old
+		// overwrite-drops-trusted asymmetry (was unendorsed; corrected
+		// by the canonical-identity dedupe).
 		cands := []candidate{
 			{Ref: "r/a:1", Source: lockfile.SourceManual, Trusted: true},
 			{Ref: "r/a:1", Source: lockfile.SourceManifest, Trusted: false},
@@ -81,11 +81,11 @@ func TestMergeCandidates(t *testing.T) {
 		if len(got) != 1 {
 			t.Fatalf("got %d, want 1", len(got))
 		}
-		// Document the actual behavior: a later untrusted overwrite drops
-		// the Trusted bit set by an earlier candidate. This is a known
-		// asymmetry — preserved here for refactor stability, not endorsed.
-		if got[0].Trusted {
-			t.Errorf("expected Trusted=false (overwrite-drops-trusted behavior), got Trusted=true; if this changed, update comment in validate.go")
+		if !got[0].Trusted {
+			t.Errorf("expected Trusted=true (trusted = OR of contributors), got false")
+		}
+		if got[0].Source != lockfile.SourceManifest {
+			t.Errorf("expected Source=manifest (higher trust wins), got %q", got[0].Source)
 		}
 	})
 

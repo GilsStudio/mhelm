@@ -132,6 +132,9 @@ type ValuesPath struct {
 const (
 	AccuracyHeuristic = "heuristic"
 	AccuracyManual    = "manual"
+	// AccuracySuffix: matched via hyphen-suffix extension of a chart
+	// default repo (cilium/operator → cilium/operator-generic).
+	AccuracySuffix = "suffix-heuristic"
 )
 
 type Chart struct {

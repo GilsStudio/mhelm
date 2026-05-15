@@ -129,18 +129,20 @@ func Run(ctx context.Context, cf chartfile.File, baseDir string) (Result, error)
 		for _, mc := range matches[img.Ref] {
 			res.Images[i].ValuesPaths = append(res.Images[i].ValuesPaths, lockfile.ValuesPath{
 				Path:     mc.Path,
-				Accuracy: lockfile.AccuracyHeuristic,
+				Accuracy: mc.Accuracy,
 			})
 		}
 	}
 	// User-supplied valuesPath from extraImages overrides/augments the
-	// heuristic match (the user explicitly told us where this image lives).
+	// heuristic match (the user explicitly told us where this image
+	// lives). Match by canonical identity, not exact ref, so it still
+	// attaches after dedupe collapsed the entry onto a digest-bearing ref.
 	for _, e := range cf.Mirror.ExtraImages {
 		if e.ValuesPath == "" {
 			continue
 		}
 		for i := range res.Images {
-			if res.Images[i].Ref != e.Ref {
+			if mergeKey(res.Images[i].Ref) != mergeKey(e.Ref) {
 				continue
 			}
 			res.Images[i].ValuesPaths = append(res.Images[i].ValuesPaths, lockfile.ValuesPath{
@@ -149,8 +151,11 @@ func Run(ctx context.Context, cf chartfile.File, baseDir string) (Result, error)
 			})
 		}
 	}
+	for i := range res.Images {
+		res.Images[i].ValuesPaths = dedupeValuesPaths(res.Images[i].ValuesPaths)
+	}
 
-	res.MirrorValues = imagevalues.BuildTagBased(matches, cf.Mirror.ExtraImages, merged, cf.Mirror.Downstream.URL)
+	res.MirrorValues = imagevalues.BuildTagBased(res.Images, cf.Mirror.ExtraImages, merged, cf.Mirror.Downstream.URL)
 	return res, nil
 }
 

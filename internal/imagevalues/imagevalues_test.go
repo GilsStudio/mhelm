@@ -8,138 +8,145 @@ import (
 	"github.com/google/go-cmp/cmp"
 )
 
+func img(ref, digest string, paths ...string) lockfile.Image {
+	i := lockfile.Image{Ref: ref, Digest: digest}
+	for _, p := range paths {
+		i.ValuesPaths = append(i.ValuesPaths, lockfile.ValuesPath{Path: p})
+	}
+	return i
+}
+
 func TestBuildTagBased(t *testing.T) {
 	t.Run("string-form-rewrite", func(t *testing.T) {
-		matches := map[string][]Candidate{
-			"nginx:1.2": {{Path: "image", Ref: "nginx:1.2", StringForm: "nginx:1.2"}},
-		}
-		got := BuildTagBased(matches, nil, nil, "oci://mirror.example.com")
-		want := map[string]any{
-			"image": "mirror.example.com/nginx:1.2",
-		}
+		images := []lockfile.Image{img("nginx:1.2", "", "image")}
+		merged := map[string]any{"image": "nginx:1.2"}
+		got := BuildTagBased(images, nil, merged, "oci://mirror.example.com")
+		want := map[string]any{"image": "mirror.example.com/nginx:1.2"}
 		if diff := cmp.Diff(want, got); diff != "" {
 			t.Errorf("(-want +got):\n%s", diff)
 		}
 	})
 
 	t.Run("object-form-with-registry", func(t *testing.T) {
-		matches := map[string][]Candidate{
-			"quay.io/org/app:v1": {{
-				Path: "controller.image",
-				Ref:  "quay.io/org/app:v1",
-				ObjectForm: map[string]interface{}{
-					"registry":   "quay.io",
-					"repository": "org/app",
-					"tag":        "v1",
-				},
-			}},
-		}
-		got := BuildTagBased(matches, nil, nil, "oci://mirror.example.com")
-		want := map[string]any{
-			"controller": map[string]any{
-				"image": map[string]any{
-					"registry":   "mirror.example.com",
-					"repository": "quay.io/org/app",
-					"tag":        "v1",
-				},
-			},
-		}
+		images := []lockfile.Image{img("quay.io/org/app:v1", "", "controller.image")}
+		merged := map[string]any{"controller": map[string]any{"image": map[string]any{
+			"registry": "quay.io", "repository": "org/app", "tag": "v1",
+		}}}
+		got := BuildTagBased(images, nil, merged, "oci://mirror.example.com")
+		want := map[string]any{"controller": map[string]any{"image": map[string]any{
+			"registry": "mirror.example.com", "repository": "quay.io/org/app", "tag": "v1",
+		}}}
 		if diff := cmp.Diff(want, got); diff != "" {
 			t.Errorf("(-want +got):\n%s", diff)
 		}
 	})
 
 	t.Run("object-form-without-registry", func(t *testing.T) {
-		matches := map[string][]Candidate{
-			"ghcr.io/org/app:v1": {{
-				Path: "image",
-				Ref:  "ghcr.io/org/app:v1",
-				ObjectForm: map[string]interface{}{
-					"repository": "ghcr.io/org/app",
-					"tag":        "v1",
-				},
-			}},
-		}
-		got := BuildTagBased(matches, nil, nil, "oci://mirror.example.com")
-		want := map[string]any{
-			"image": map[string]any{
-				"repository": "mirror.example.com/ghcr.io/org/app",
-				"tag":        "v1",
-			},
-		}
+		images := []lockfile.Image{img("ghcr.io/org/app:v1", "", "image")}
+		merged := map[string]any{"image": map[string]any{
+			"repository": "ghcr.io/org/app", "tag": "v1",
+		}}
+		got := BuildTagBased(images, nil, merged, "oci://mirror.example.com")
+		want := map[string]any{"image": map[string]any{
+			"repository": "mirror.example.com/ghcr.io/org/app", "tag": "v1",
+		}}
 		if diff := cmp.Diff(want, got); diff != "" {
 			t.Errorf("(-want +got):\n%s", diff)
 		}
 	})
 
-	t.Run("object-form-preserves-digest", func(t *testing.T) {
-		matches := map[string][]Candidate{
-			"ghcr.io/org/app@sha256:abc": {{
-				Path: "image",
-				Ref:  "ghcr.io/org/app@sha256:abc",
-				ObjectForm: map[string]interface{}{
-					"repository": "ghcr.io/org/app",
-					"digest":     "sha256:abc",
-				},
-			}},
+	t.Run("object-form-preserves-chart-digest-when-none-resolved", func(t *testing.T) {
+		images := []lockfile.Image{img("ghcr.io/org/app@sha256:abc", "", "image")}
+		merged := map[string]any{"image": map[string]any{
+			"repository": "ghcr.io/org/app", "digest": "sha256:abc",
+		}}
+		got := BuildTagBased(images, nil, merged, "oci://mirror.example.com")
+		want := map[string]any{"image": map[string]any{
+			"repository": "mirror.example.com/ghcr.io/org/app", "digest": "sha256:abc",
+		}}
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Errorf("(-want +got):\n%s", diff)
 		}
-		got := BuildTagBased(matches, nil, nil, "oci://mirror.example.com")
-		want := map[string]any{
-			"image": map[string]any{
-				"repository": "mirror.example.com/ghcr.io/org/app",
-				"digest":     "sha256:abc",
-			},
+	})
+
+	t.Run("emits-resolved-digest-even-without-digest-key", func(t *testing.T) {
+		// Cilium's operator.image carries genericDigest, not digest.
+		images := []lockfile.Image{img("quay.io/cilium/operator-generic:v1.19.3", "sha256:res", "operator.image")}
+		merged := map[string]any{"operator": map[string]any{"image": map[string]any{
+			"repository": "quay.io/cilium/operator-generic", "tag": "v1.19.3", "genericDigest": "sha256:old",
+		}}}
+		got := BuildTagBased(images, nil, merged, "oci://mirror.example.com")
+		want := map[string]any{"operator": map[string]any{"image": map[string]any{
+			"repository": "mirror.example.com/quay.io/cilium/operator-generic",
+			"tag":        "v1.19.3", "digest": "sha256:res", "genericDigest": "sha256:res",
+		}}}
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Errorf("(-want +got):\n%s", diff)
 		}
+	})
+
+	t.Run("per-cloud-digest-suffix-match", func(t *testing.T) {
+		// repository is the base (operator); rendered image is
+		// operator-generic ⇒ only genericDigest is set, azureDigest left
+		// to the chart's own default.
+		images := []lockfile.Image{img("quay.io/cilium/operator-generic:v1.19.3", "sha256:res", "operator.image")}
+		merged := map[string]any{"operator": map[string]any{"image": map[string]any{
+			"repository": "quay.io/cilium/operator", "tag": "v1.19.3",
+			"genericDigest": "sha256:g", "azureDigest": "sha256:a",
+		}}}
+		got := BuildTagBased(images, nil, merged, "oci://mirror.example.com")
+		want := map[string]any{"operator": map[string]any{"image": map[string]any{
+			"repository": "mirror.example.com/quay.io/cilium/operator", "tag": "v1.19.3",
+			"digest": "sha256:res", "genericDigest": "sha256:res",
+		}}}
 		if diff := cmp.Diff(want, got); diff != "" {
 			t.Errorf("(-want +got):\n%s", diff)
 		}
 	})
 
 	t.Run("extraImages-string-shape-inferred-from-merged", func(t *testing.T) {
-		extras := []chartfile.ExtraImage{
-			{Ref: "registry.io/extra:1", ValuesPath: "extraImage"},
-		}
+		images := []lockfile.Image{img("registry.io/extra:1", "", "extraImage")}
 		merged := map[string]any{"extraImage": "registry.io/extra:1"}
-		got := BuildTagBased(nil, extras, merged, "oci://mirror.example.com")
-		want := map[string]any{
-			"extraImage": "mirror.example.com/registry.io/extra:1",
-		}
+		got := BuildTagBased(images, nil, merged, "oci://mirror.example.com")
+		want := map[string]any{"extraImage": "mirror.example.com/registry.io/extra:1"}
 		if diff := cmp.Diff(want, got); diff != "" {
 			t.Errorf("(-want +got):\n%s", diff)
 		}
 	})
 
-	t.Run("extraImages-map-shape-inferred-from-merged", func(t *testing.T) {
-		extras := []chartfile.ExtraImage{
-			{Ref: "quay.io/org/extra:v1", ValuesPath: "ctrl.image"},
-		}
-		merged := map[string]any{
-			"ctrl": map[string]any{
-				"image": map[string]any{
-					"registry":   "quay.io",
-					"repository": "org/extra",
-					"tag":        "v1",
-				},
-			},
-		}
-		got := BuildTagBased(nil, extras, merged, "oci://mirror.example.com")
-		want := map[string]any{
-			"ctrl": map[string]any{
-				"image": map[string]any{
-					"registry":   "mirror.example.com",
-					"repository": "quay.io/org/extra",
-					"tag":        "v1",
-				},
-			},
-		}
+	t.Run("override-path-emits-pinned-string", func(t *testing.T) {
+		images := []lockfile.Image{img("quay.io/cilium/operator-generic:v1.19.3", "sha256:res", "operator.image")}
+		extras := []chartfile.ExtraImage{{
+			Ref: "quay.io/cilium/operator-generic:v1.19.3", ValuesPath: "operator.image", OverridePath: "operator.image.override",
+		}}
+		merged := map[string]any{"operator": map[string]any{"image": map[string]any{
+			"repository": "quay.io/cilium/operator-generic", "tag": "v1.19.3",
+		}}}
+		got := BuildTagBased(images, extras, merged, "oci://mirror.example.com")
+		want := map[string]any{"operator": map[string]any{"image": map[string]any{
+			"repository": "mirror.example.com/quay.io/cilium/operator-generic",
+			"tag":        "v1.19.3", "digest": "sha256:res",
+			"override": "mirror.example.com/quay.io/cilium/operator-generic:v1.19.3@sha256:res",
+		}}}
 		if diff := cmp.Diff(want, got); diff != "" {
 			t.Errorf("(-want +got):\n%s", diff)
 		}
 	})
 
-	t.Run("extraImages-no-valuesPath-skipped", func(t *testing.T) {
-		extras := []chartfile.ExtraImage{{Ref: "registry.io/extra:1"}}
-		got := BuildTagBased(nil, extras, nil, "oci://mirror.example.com")
+	t.Run("override-path-no-digest", func(t *testing.T) {
+		images := []lockfile.Image{img("quay.io/cilium/op-generic:v1", "", "x.image")}
+		extras := []chartfile.ExtraImage{{Ref: "quay.io/cilium/op-generic:v1", OverridePath: "x.image.override"}}
+		got := BuildTagBased(images, extras, map[string]any{}, "oci://mirror.example.com")
+		want := map[string]any{"x": map[string]any{"image": map[string]any{
+			"override": "mirror.example.com/quay.io/cilium/op-generic:v1",
+		}}}
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Errorf("(-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("no-valuesPaths-no-override-skipped", func(t *testing.T) {
+		got := BuildTagBased([]lockfile.Image{img("registry.io/extra:1", "")}, nil, nil, "oci://mirror.example.com")
 		if got != nil {
 			t.Errorf("got %#v, want nil", got)
 		}

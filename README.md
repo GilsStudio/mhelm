@@ -26,6 +26,59 @@ Two trust zones:
 
 Signing keys never touch a developer laptop. Every mirror is a reviewable diff of `chart-lock.json`.
 
+## Quickstart — add your first chart
+
+You prepare on your laptop (network-read-only, no credentials); CI mirrors and signs (ambient OIDC, no keys on your machine). One chart = one directory.
+
+```
+LAPTOP — read-only, no credentials          CI — writes + signs (OIDC)
+─────────────────────────────────          ──────────────────────────────
+1  mhelm init       scaffold                6  merge to main → mirror.yml:
+2  edit chart.json + helm/values.yml           discover→verify→mirror→wrap
+3  mhelm discover    → lock + values            →provenance→slsa→sign+attest
+4  mhelm discover --check  (exit 0)             auto-commits lockfile back
+5  commit + PR  ──dry-run gate──▶            7  drift.yml nightly → PR on drift
+                                             8  release print-install | bash
+```
+
+1. **Scaffold** the chart directory with a starter `chart.json` + `helm/values.yml`:
+
+   ```
+   mhelm init platform/cilium \
+     --upstream-type oci \
+     --upstream-url oci://quay.io/cilium/charts/cilium \
+     --upstream-version 1.19.3 \
+     --downstream-url oci://ghcr.io/myorg/mirror
+   ```
+
+   For a classic HTTP Helm repo use `--upstream-type repo` with `--upstream-name <chart>` and an `https://` `--upstream-url`.
+
+2. **Configure** `platform/cilium/chart.json`: add `mirror.discoveryValues`, any `mirror.extraImages` discovery can't auto-find, `mirror.verify` / `mirror.vulnPolicy`, and the optional `wrap` / `release` sections. Put deploy-shaping Helm values in `platform/cilium/helm/values.yml`. Field-by-field reference: [`chart.json` schema](#chartjson-schema). Full worked example: [`examples/cilium/`](examples/cilium/) ([`chart.json`](examples/cilium/chart.json)).
+
+3. **Discover** — render the chart and pin every image (read-only):
+
+   ```
+   mhelm discover platform/cilium
+   ```
+
+   Writes `chart-lock.json` (the source of truth) and `image-values.yaml` (the `helm install --values` override). Both are committed.
+
+4. **Sanity-check** — `mhelm discover --check platform/cilium` must exit `0`. This is the exact gate CI enforces; exit `2` means the lockfile is stale — re-run step 3. Optionally `mhelm verify platform/cilium` to inspect upstream signature posture before pushing.
+
+5. **Commit + open a PR** — commit `chart.json`, `chart-lock.json`, `image-values.yaml`. Gate the PR with the Action in **`dry-run`** mode (`command: dry-run` → `discover --check` + `verify`, no writes/signing/commit): a stale lockfile fails the check, forcing fresh discover output before merge. This is the CI counterpart of step 4 — wire it as a `pull_request` workflow (the shipped examples are push/schedule only; see *Wire CI* below).
+
+6. **Land it → CI mirrors.** When the `chart.json` change lands on your default branch, [`mirror.yml`](examples/workflows/mirror.yml) (a `platform/**/chart.json` matrix) runs the full pipeline — discover → verify → mirror → wrap → provenance → slsa → cosign sign + attest (SBOM / vuln / SLSA / MirrorProvenance) — pushes chart + every image to your downstream registry, and auto-commits the updated `chart-lock.json` / `image-values.yaml` / `mirror-provenance.json` back. Details: [Canonical CI sequence](#canonical-ci-sequence), [GitHub Action](#github-action).
+
+7. **Ongoing drift.** [`drift.yml`](examples/workflows/drift.yml) runs nightly and opens a PR per chart on upstream rotation, downstream tampering, or a new upstream version. Review it, bump `mirror.upstream.version`, and the loop returns to step 3.
+
+8. **Deploy** — emit a runnable install for the locked artifact (the wrapper chart when `wrap` is set, otherwise the bare mirrored chart + `image-values.yaml`):
+
+   ```
+   mhelm release print-install platform/cilium | bash
+   ```
+
+**Wire CI:** copy [`examples/workflows/mirror.yml`](examples/workflows/mirror.yml) and [`examples/workflows/drift.yml`](examples/workflows/drift.yml) into `.github/workflows/`, then adjust the chart matrix and `downstream.url`. For the step-5 PR gate, add a third `pull_request`-triggered workflow that runs the Action with `command: dry-run` (no shipped example yet). Steps 1–5 are the only human loop; everything after the change lands is automated and auditable as git diffs.
+
 ## Files
 
 | File | Producer | Committed | Role |

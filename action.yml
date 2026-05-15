@@ -62,7 +62,7 @@ outputs:
     description: 'Absolute path to the updated chart-lock.json.'
     value: ${{ steps.mirror.outputs.lockfile }}
   mirror-values:
-    description: 'Absolute path to the generated mirror-values.yaml.'
+    description: 'Absolute path to the generated image-values.yaml (output id kept for backward compatibility).'
     value: ${{ steps.mirror.outputs.mirror-values }}
   provenance:
     description: 'Absolute path to mirror-provenance.json (set only when sign=true).'
@@ -142,7 +142,7 @@ runs:
         set -euo pipefail
         mhelm mirror "$DIR"
         echo "lockfile=$GITHUB_WORKSPACE/$DIR/chart-lock.json" >> "$GITHUB_OUTPUT"
-        echo "mirror-values=$GITHUB_WORKSPACE/$DIR/mirror-values.yaml" >> "$GITHUB_OUTPUT"
+        echo "mirror-values=$GITHUB_WORKSPACE/$DIR/image-values.yaml" >> "$GITHUB_OUTPUT"
 
     - name: mhelm wrap
       if: inputs.command == 'mirror'

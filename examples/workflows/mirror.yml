@@ -6,7 +6,7 @@
 #     cert-manager/
 #       chart.json
 #       chart-lock.json     (generated, committed)
-#       mirror-values.yaml  (generated, committed)
+#       image-values.yaml  (generated, committed)
 #     cilium/
 #       chart.json
 #       ...
@@ -16,7 +16,7 @@
 #   2. Logs in to GHCR (or whichever registry chart.json#downstream.url points at).
 #   3. Runs the mhelm composite action, which discovers → verifies → mirrors →
 #      cosign-signs + attests every artifact.
-#   4. Optionally commits updated chart-lock.json / mirror-values.yaml /
+#   4. Optionally commits updated chart-lock.json / image-values.yaml /
 #      mirror-provenance.json back to the repo as a PR.
 
 name: Mirror Helm charts
@@ -61,7 +61,7 @@ jobs:
 
       - name: Mirror with mhelm
         id: mhelm
-        uses: gilsstudio/mhelm@v1
+        uses: gilsstudio/mhelm@v0.4.0
         with:
           dir: ${{ matrix.chart }}
           # Set to "true" to fail the job when an upstream image is unsigned.
@@ -72,6 +72,6 @@ jobs:
         with:
           file_pattern: |
             ${{ matrix.chart }}/chart-lock.json
-            ${{ matrix.chart }}/mirror-values.yaml
+            ${{ matrix.chart }}/image-values.yaml
             ${{ matrix.chart }}/mirror-provenance.json
           commit_message: 'chore(mirror): update lockfile for ${{ matrix.chart }}'

@@ -23,7 +23,7 @@ var discoverCmd = &cobra.Command{
 	Use:   "discover [dir]",
 	Short: "Render the chart and discover every container image it references",
 	Long: `Read <dir>/chart.json, pull the upstream chart (read-only), render it
-with the values listed in chart.json's valuesFiles, walk the rendered K8s
+with the values listed in chart.json's mirror.discoveryValues, walk the rendered K8s
 manifests for container image refs, and write the discovered images into
 <dir>/chart-lock.json.
 

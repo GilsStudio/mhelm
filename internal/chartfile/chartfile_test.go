@@ -43,6 +43,10 @@ func TestValidate(t *testing.T) {
 			*f = validOCIFile()
 			f.Mirror.Upstream.URL = "ghcr.io/org/charts/cert-manager"
 		}, "mirror.upstream.url must start with oci://"},
+		{"oci-name-rejected", func(f *File) {
+			*f = validOCIFile()
+			f.Mirror.Upstream.Name = "cilium"
+		}, "mirror.upstream.name only applies to mirror.upstream.type"},
 		{"missing-upstream-url", func(f *File) { f.Mirror.Upstream.URL = "" }, "mirror.upstream.url is required"},
 		{"missing-upstream-version", func(f *File) { f.Mirror.Upstream.Version = "" }, "mirror.upstream.version is required"},
 		{"downstream-type-not-oci", func(f *File) { f.Mirror.Downstream.Type = "repo" }, `mirror.downstream.type must be "oci"`},

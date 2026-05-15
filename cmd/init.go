@@ -55,6 +55,14 @@ directory is used. If <dir> does not exist, it is created.`,
 			return nil
 		}
 
+		// Fail fast on the OCI+name mistake (the scaffold otherwise looks
+		// valid but `mhelm discover` 401s because name is not appended for
+		// OCI). chartfile.Validate enforces the same rule for hand-written
+		// files; here we phrase it in flag terms for the init UX.
+		if initUpstreamType == chartfile.TypeOCI && initUpstreamName != "" {
+			return fmt.Errorf("--upstream-name only applies to --upstream-type=%s — for OCI put the full chart path in --upstream-url (e.g. oci://quay.io/cilium/charts/cilium)", chartfile.TypeRepo)
+		}
+
 		f := chartfile.File{
 			APIVersion: chartfile.APIVersion,
 			Mirror: chartfile.Mirror{
@@ -85,7 +93,7 @@ directory is used. If <dir> does not exist, it is created.`,
 func init() {
 	initCmd.Flags().StringVar(&initUpstreamType, "upstream-type", chartfile.TypeRepo, "upstream type: repo or oci")
 	initCmd.Flags().StringVar(&initUpstreamURL, "upstream-url", "", "upstream URL (repo base URL or oci://registry/path/chart)")
-	initCmd.Flags().StringVar(&initUpstreamName, "upstream-name", "", "upstream chart name (required for type=repo)")
+	initCmd.Flags().StringVar(&initUpstreamName, "upstream-name", "", "upstream chart name (type=repo only; for oci put the full chart path in --upstream-url)")
 	initCmd.Flags().StringVar(&initUpstreamVersion, "upstream-version", "", "upstream chart version")
 	initCmd.Flags().StringVar(&initDownstreamURL, "downstream-url", "", "downstream OCI URL without chart name (oci://registry/path)")
 }

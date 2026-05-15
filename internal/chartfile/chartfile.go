@@ -237,6 +237,9 @@ func (f File) Validate() error {
 		if !strings.HasPrefix(up.URL, "oci://") {
 			return fmt.Errorf("mirror.upstream.url must start with oci:// when mirror.upstream.type=%q", TypeOCI)
 		}
+		if up.Name != "" {
+			return fmt.Errorf("mirror.upstream.name only applies to mirror.upstream.type=%q — for OCI put the full chart path in mirror.upstream.url (e.g. oci://quay.io/cilium/charts/cilium)", TypeRepo)
+		}
 	case "":
 		return fmt.Errorf("mirror.upstream.type is required (%q or %q)", TypeRepo, TypeOCI)
 	default:

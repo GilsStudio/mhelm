@@ -3,8 +3,7 @@
   "mirror": {
     "upstream": {
       "type": "oci",
-      "url": "oci://quay.io/cilium/charts",
-      "name": "cilium",
+      "url": "oci://quay.io/cilium/charts/cilium",
       "version": "1.19.3"
     },
     "downstream": {

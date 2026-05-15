@@ -100,6 +100,9 @@ func pullFromOCI(ep chartfile.Endpoint) ([]byte, string, error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("registry client: %w", err)
 	}
+	// ep.Name is intentionally NOT appended for OCI: the full chart path
+	// lives in ep.URL (oci://registry/path/chart). chartfile.Validate
+	// rejects a non-empty upstream.name for type=oci so this stays true.
 	ref := strings.TrimPrefix(ep.URL, "oci://") + ":" + ep.Version
 	res, err := client.Pull(ref, registry.PullOptWithChart(true))
 	if err != nil {

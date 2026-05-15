@@ -45,7 +45,7 @@ var ErrNoRelease = errors.New("chart.json has no release section — run `mhelm 
 
 // ErrNoArtifact is returned when the lockfile has neither a wrap
 // block nor a mirrored chart to install.
-var ErrNoArtifact = errors.New("chart-lock.json has no installable artifact — run `mhelm mirror` (and optionally `mhelm wrap`) first")
+var ErrNoArtifact = errors.New("run `mhelm mirror` first (then optionally `mhelm wrap`) — chart-lock.json has no installable artifact")
 
 // Resolve picks the artifact and assembles the Plan.
 func Resolve(cf chartfile.File, lf lockfile.File) (Plan, error) {

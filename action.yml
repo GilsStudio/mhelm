@@ -1,8 +1,9 @@
 name: 'mhelm — supply-chain-secure Helm chart mirror'
 description: >-
   Mirror a Helm chart and every container image it references to a private
-  OCI registry, then cosign-sign each artifact and attach SBOM + vuln +
-  MirrorProvenance attestations. Pinned digests committed to chart-lock.json.
+  OCI registry, then cosign-sign every artifact, attach SLSA + MirrorProvenance
+  to all of them, and SBOM + vuln scans to the images. Pinned digests
+  committed to chart-lock.json.
 author: 'gilsstudio'
 branding:
   icon: 'package'
@@ -29,9 +30,11 @@ inputs:
     default: 'v2.6.3'
   sign:
     description: >-
-      Sign and attest every downstream artifact (cosign + syft SBOM + grype vuln
-      + SLSA + MirrorProvenance). Mirror mode only. Requires the calling
-      workflow to grant `permissions: { id-token: write, packages: write }`.
+      Sign and attest every downstream artifact: cosign signature + SLSA +
+      MirrorProvenance on all of them, plus syft SBOM + grype vuln on the
+      images (charts are Helm OCI artifacts syft cannot catalog). Mirror
+      mode only. Requires the calling workflow to grant
+      `permissions: { id-token: write, packages: write }`.
     required: false
     default: 'true'
   verify:
@@ -218,9 +221,29 @@ runs:
         MIRROR_PROV="$DIR/mirror-provenance.json"
         SLSA_PROV="$DIR/slsa-provenance.json"
 
-        mhelm refs "$DIR" | while read -r REF; do
+        # Charts (the mirrored chart + the optional wrapper) are Helm OCI
+        # artifacts, not runnable images: syft/grype have no cataloger for
+        # application/vnd.cncf.helm.* media types and error out. They get a
+        # cosign signature + SLSA + MirrorProvenance only — there is no
+        # package SBOM for a chart's templated YAML.
+        mhelm refs --chart-only "$DIR" | while read -r REF; do
           [ -z "$REF" ] && continue
-          echo "::group::$REF"
+          echo "::group::chart $REF"
+
+          cosign sign --yes "$REF"
+          cosign attest --yes --predicate "$SLSA_PROV" --type slsaprovenance1 "$REF"
+          cosign attest --yes \
+            --predicate "$MIRROR_PROV" \
+            --type "https://mhelm.dev/MirrorProvenance/v1" \
+            "$REF"
+
+          echo "::endgroup::"
+        done
+
+        # Images get the full chain.
+        mhelm refs --images-only "$DIR" | while read -r REF; do
+          [ -z "$REF" ] && continue
+          echo "::group::image $REF"
 
           # 1. Keyless cosign signature (Fulcio cert + Rekor log via ambient OIDC).
           cosign sign --yes "$REF"

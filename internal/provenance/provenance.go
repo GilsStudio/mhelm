@@ -14,11 +14,11 @@ package provenance
 import (
 	"encoding/json"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/gilsstudio/mhelm/internal/chartfile"
 	"github.com/gilsstudio/mhelm/internal/lockfile"
+	"github.com/gilsstudio/mhelm/internal/mirrorlayout"
 )
 
 const PredicateType = "https://mhelm.dev/MirrorProvenance/v1"
@@ -126,7 +126,7 @@ func Build(cf chartfile.File, lf lockfile.File, mhelmVersion string) Predicate {
 			ChartContentDigest: lf.Mirror.Upstream.ChartContentDigest,
 		},
 		Downstream: Downstream{
-			RegistryPrefix: strings.TrimPrefix(cf.Mirror.Downstream.URL, "oci://"),
+			RegistryPrefix: mirrorlayout.Prefix(cf.Mirror.Downstream.URL),
 			Chart: Artifact{
 				Ref:            lf.Mirror.Downstream.Ref,
 				ManifestDigest: lf.Mirror.Downstream.OCIManifestDigest,

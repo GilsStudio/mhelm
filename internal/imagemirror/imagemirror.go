@@ -31,8 +31,10 @@ const MaxParallel = 8
 // and idempotent (HEAD the destination first; skip when its digest already
 // equals the upstream-pinned digest).
 //
-// mirrorPrefix is chart.json#downstream.url with the oci:// scheme stripped
-// (e.g. "ghcr.io/myorg/mirror").
+// mirrorPrefix is the images namespace — mirrorlayout.ImagePrefix(downstream
+// .url), e.g. "ghcr.io/myorg/mirror/images". The caller resolves it (not the
+// raw downstream URL) so this push and imagevalues' rewrite share one source
+// of truth and cannot diverge.
 func Mirror(ctx context.Context, refs []Input, mirrorPrefix string) []Result {
 	results := make([]Result, len(refs))
 	sem := make(chan struct{}, MaxParallel)

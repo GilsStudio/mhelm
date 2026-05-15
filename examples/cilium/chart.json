@@ -48,7 +48,6 @@
     }
   },
   "wrap": {
-    "name":    "cilium-wrapped",
     "version": "1.19.3-myorg.1",
     "valuesFiles": [
       "helm/values.yml"

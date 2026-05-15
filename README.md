@@ -140,7 +140,7 @@ in the nested form:
       "allowlist": [ { "cve": "CVE-2024-1234", "expires": "2026-12-31", "reason": "tracked upstream; no patch yet" } ]
     }
   },
-  "wrap":    { "name": "cert-manager-wrapped", "version": "v1.17.0-myorg.1", "valuesFiles": ["helm/values.yml"], "extraManifests": [] },
+  "wrap":    { "version": "v1.17.0-myorg.1", "valuesFiles": ["helm/values.yml"], "extraManifests": [] },
   "release": { "name": "cert-manager", "namespace": "cert-manager", "valuesFiles": ["helm/install-overrides.yml"] }
 }
 ```
@@ -153,13 +153,13 @@ in the nested form:
 | `mirror.upstream.name` | `type=repo` only | Chart name. For `oci` it is rejected — put the full chart path in `url`. |
 | `mirror.upstream.version` | yes | Semver (repo) or tag (oci). |
 | `mirror.downstream.type` | yes | `oci` (only OCI destinations supported). |
-| `mirror.downstream.url` | yes | Target registry path **without** the chart name. |
+| `mirror.downstream.url` | yes | Target registry path **without** the chart name. mhelm namespaces artifacts beneath it: `charts/<chart>` (faithful copy), `platform/<chart>` (wrapper), `images/<upstream-path>` (every image). |
 | `mirror.discoveryValues` | no | YAML files merged in order during `discover` so rendered manifests match what you'll deploy. |
 | `mirror.extraImages` | no | Manual list `[{ref, valuesPath?, overridePath?, reason?}]` for images discovery can't auto-find. `overridePath` emits the whole pinned ref as a single string (e.g. cilium's `image.override`). |
 | `mirror.verify.trustedIdentities` | no | Allowlist for `mhelm verify`. When set, only matching cosign signatures are accepted. |
 | `mirror.verify.allowUnsigned` | no | Repository paths exempt from verification (recorded `type=allowlisted`). |
 | `mirror.vulnPolicy` | no | `failOn` (`critical`/`high`/`medium`/`never`) + `allowlist[{cve,expires,reason}]` for `mhelm vuln-gate`. |
-| `wrap` | no | Author a wrapper chart depending on the mirror (`name`, `version`, `valuesFiles`, `extraManifests`). Image rewrites are auto-derived from the lockfile. |
+| `wrap` | no | Author a wrapper chart depending on the mirror (`version`, `valuesFiles`, `extraManifests`). The wrapper reuses the mirrored chart's name under the `platform/` namespace; `version` is optional (defaults to the mirrored chart's version — set it to re-release independently). Image rewrites are auto-derived from the lockfile. |
 | `release` | no | Deploy-time ergonomics for `mhelm release print-install` (`name`, `namespace`, `valuesFiles`). |
 
 ## Commands

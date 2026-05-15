@@ -6,12 +6,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/gilsstudio/mhelm/internal/chartfile"
 	"github.com/gilsstudio/mhelm/internal/chartpull"
 	"github.com/gilsstudio/mhelm/internal/insecure"
 	"github.com/gilsstudio/mhelm/internal/lockfile"
+	"github.com/gilsstudio/mhelm/internal/mirrorlayout"
 	"helm.sh/helm/v3/pkg/chart/loader"
 	"helm.sh/helm/v3/pkg/cli"
 	"helm.sh/helm/v3/pkg/registry"
@@ -56,9 +56,8 @@ func Run(ctx context.Context, cf chartfile.File) (Result, error) {
 		return res, fmt.Errorf("registry client: %w", err)
 	}
 
-	destRef := fmt.Sprintf("%s/%s:%s",
-		strings.TrimPrefix(cf.Mirror.Downstream.URL, "oci://"),
-		res.ChartName,
+	destRef := fmt.Sprintf("%s:%s",
+		mirrorlayout.ChartRepo(cf.Mirror.Downstream.URL, res.ChartName),
 		res.ChartVersion,
 	)
 	pushRes, err := client.Push(tgz, destRef)

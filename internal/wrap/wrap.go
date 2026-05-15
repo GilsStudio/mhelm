@@ -25,6 +25,7 @@ import (
 	"github.com/gilsstudio/mhelm/internal/imagevalues"
 	"github.com/gilsstudio/mhelm/internal/insecure"
 	"github.com/gilsstudio/mhelm/internal/lockfile"
+	"github.com/gilsstudio/mhelm/internal/mirrorlayout"
 	"github.com/google/go-containerregistry/pkg/name"
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
@@ -54,11 +55,11 @@ type Result struct {
 	ChartName                string
 	ChartVersion             string
 	ChartContentDigest       string // sha256:... of the wrapper .tgz bytes
-	DownstreamRef            string // <prefix>/<wrap.name>:<wrap.version>
+	DownstreamRef            string // <prefix>/platform/<chart>:<version>
 	DownstreamManifestDigest string // sha256:... after push
 
 	// DependsOnRef is the mirrored upstream the wrapper depends on,
-	// expressed as <prefix>/<chart-name>:<chart-version>.
+	// expressed as <prefix>/charts/<chart-name>:<chart-version>.
 	DependsOnRef            string
 	DependsOnManifestDigest string
 
@@ -134,6 +135,18 @@ func Run(ctx context.Context, cf chartfile.File, lf lockfile.File, baseDir strin
 	rewrites := imagevalues.BuildDigestPinned(lf.Mirror.Images, merged)
 	composed := chartutil.CoalesceTables(userOverlay, rewrites)
 
+	// The wrapper reuses the mirrored chart's name — it lives in its own
+	// platform/ registry namespace, so <prefix>/charts/<name> (faithful)
+	// and <prefix>/platform/<name> (hardened) coexist without collision.
+	// wrap.version defaults to the mirrored chart's version; an explicit
+	// value lets the wrapper re-release independently of an upstream bump
+	// while keeping every tag immutable.
+	wrapName := lf.Mirror.Chart.Name
+	wrapVersion := cf.Wrap.Version
+	if wrapVersion == "" {
+		wrapVersion = lf.Mirror.Chart.Version
+	}
+
 	// 4. Nest the composed values under the dependency's name so they
 	// cascade to the subchart per Helm's subchart-values convention.
 	depName := lf.Mirror.Chart.Name
@@ -147,7 +160,7 @@ func Run(ctx context.Context, cf chartfile.File, lf lockfile.File, baseDir strin
 	// time; the .tgz must live inside the wrapper.
 	downstreamEp := chartfile.Endpoint{
 		Type:    chartfile.TypeOCI,
-		URL:     "oci://" + strings.TrimSuffix(strings.TrimPrefix(cf.Mirror.Downstream.URL, "oci://"), "/") + "/" + depName,
+		URL:     "oci://" + mirrorlayout.ChartRepo(cf.Mirror.Downstream.URL, depName),
 		Version: lf.Mirror.Chart.Version,
 	}
 	depPull, err := chartpull.Pull(ctx, downstreamEp)
@@ -169,13 +182,16 @@ func Run(ctx context.Context, cf chartfile.File, lf lockfile.File, baseDir strin
 	wrapper := &chart.Chart{
 		Metadata: &chart.Metadata{
 			APIVersion: chart.APIVersionV2,
-			Name:       cf.Wrap.Name,
-			Version:    cf.Wrap.Version,
+			Name:       wrapName,
+			Version:    wrapVersion,
 			Type:       "application",
 			Dependencies: []*chart.Dependency{{
-				Name:       depName,
-				Version:    lf.Mirror.Chart.Version,
-				Repository: cf.Mirror.Downstream.URL,
+				Name:    depName,
+				Version: lf.Mirror.Chart.Version,
+				// Informational only — the dep .tgz is vendored into the
+				// wrapper's charts/ below, so Helm never resolves this at
+				// install time. Point it at the real charts/ namespace.
+				Repository: "oci://" + mirrorlayout.ChartsBase(cf.Mirror.Downstream.URL),
 			}},
 		},
 		Values: wrapperValues,
@@ -236,10 +252,9 @@ func Run(ctx context.Context, cf chartfile.File, lf lockfile.File, baseDir strin
 	if err != nil {
 		return res, fmt.Errorf("registry client: %w", err)
 	}
-	destRef := fmt.Sprintf("%s/%s:%s",
-		strings.TrimPrefix(cf.Mirror.Downstream.URL, "oci://"),
-		cf.Wrap.Name,
-		cf.Wrap.Version,
+	destRef := fmt.Sprintf("%s:%s",
+		mirrorlayout.PlatformRepo(cf.Mirror.Downstream.URL, wrapName),
+		wrapVersion,
 	)
 	pushRes, err := client.Push(tgz, destRef)
 	if err != nil {
@@ -247,8 +262,8 @@ func Run(ctx context.Context, cf chartfile.File, lf lockfile.File, baseDir strin
 	}
 
 	res = Result{
-		ChartName:               cf.Wrap.Name,
-		ChartVersion:            cf.Wrap.Version,
+		ChartName:               wrapName,
+		ChartVersion:            wrapVersion,
 		ChartContentDigest:      lockfile.ContentDigest(tgz),
 		DownstreamRef:           destRef,
 		DependsOnRef:            lf.Mirror.Downstream.Ref,

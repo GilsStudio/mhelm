@@ -132,8 +132,15 @@ type Release struct {
 // wrapper Helm chart that depends on the mirrored upstream. Image
 // rewrites are NOT configured here in v0.3.0+ — `mhelm wrap` derives
 // them automatically from lockfile.mirror.images[].valuesPaths[].
+//
+// The wrapper has no name field: it is pushed under its own registry
+// namespace (mirrorlayout.PlatformRepo) and reuses the mirrored chart's
+// name, so `<prefix>/charts/cilium` (faithful copy) and
+// `<prefix>/platform/cilium` (hardened) sit side by side. Version is
+// optional and defaults to the mirrored chart's version; set it
+// (e.g. "1.19.3-myorg.2") to re-release the wrapper independently of an
+// upstream bump while keeping tags immutable.
 type Wrap struct {
-	Name           string   `json:"name,omitempty"`
 	Version        string   `json:"version,omitempty"`
 	ValuesFiles    []string `json:"valuesFiles,omitempty"`
 	ExtraManifests []string `json:"extraManifests,omitempty"`
@@ -162,6 +169,7 @@ func Load(filePath string) (File, error) {
 			return f, fmt.Errorf("parse %s: %w", filePath, err)
 		}
 		warnDeprecatedImageOverrides(filePath, b)
+		warnDeprecatedWrapName(filePath, b)
 		return f, nil
 	case "":
 		var legacy v01File
@@ -198,6 +206,31 @@ func warnDeprecatedImageOverrides(filePath string, raw []byte) {
 	fmt.Fprintf(os.Stderr,
 		"warn: %s carries `wrap.imageOverrides` — no longer used as of v0.3.0. "+
 			"Remove the field; rewrites are derived from lockfile.mirror.images[].valuesPaths[].\n",
+		filePath)
+}
+
+// warnDeprecatedWrapName surfaces a stderr warning when an adopter
+// still carries `wrap.name` in their chart.json. The field was required
+// in v0.x to dodge a flat-path collision with the mirrored chart; the
+// wrapper now lives in its own `platform/` registry namespace and
+// reuses the mirrored chart's name, so the field is removed. Soft-land
+// (warn, don't hard-fail) — the value is simply ignored.
+func warnDeprecatedWrapName(filePath string, raw []byte) {
+	var sniff struct {
+		Wrap struct {
+			Name string `json:"name"`
+		} `json:"wrap"`
+	}
+	if err := json.Unmarshal(raw, &sniff); err != nil {
+		return
+	}
+	if sniff.Wrap.Name == "" {
+		return
+	}
+	fmt.Fprintf(os.Stderr,
+		"warn: %s carries `wrap.name` — no longer used. The wrapper is "+
+			"pushed under <downstream>/platform/<chart> reusing the mirrored "+
+			"chart's name; remove the field.\n",
 		filePath)
 }
 
@@ -269,14 +302,9 @@ func (f File) Validate() error {
 			return fmt.Errorf("mirror.extraImages[%d]: overridePath must differ from valuesPath", i)
 		}
 	}
-	if f.Wrap != nil {
-		if f.Wrap.Name == "" {
-			return fmt.Errorf("wrap.name is required when wrap is configured")
-		}
-		if f.Wrap.Version == "" {
-			return fmt.Errorf("wrap.version is required when wrap is configured")
-		}
-	}
+	// wrap needs no required fields: the wrapper inherits the mirrored
+	// chart's name, and wrap.version defaults to the mirrored chart's
+	// version when omitted.
 	if f.Release != nil {
 		if f.Release.Name == "" {
 			return fmt.Errorf("release.name is required when release is configured")

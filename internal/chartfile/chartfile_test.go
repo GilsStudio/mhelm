@@ -250,7 +250,7 @@ func TestDiscoveryValuesEffective_PrefersMirror(t *testing.T) {
 // mirror.discoveryValues yields an empty discovery list — `mhelm
 // discover` renders with chart defaults only.
 func TestDiscoveryValuesEffective_NoFallback(t *testing.T) {
-	f := File{Wrap: &Wrap{Name: "x", Version: "1", ValuesFiles: []string{"deploy.yml"}}}
+	f := File{Wrap: &Wrap{Version: "1", ValuesFiles: []string{"deploy.yml"}}}
 	got := f.DiscoveryValuesEffective()
 	if len(got) != 0 {
 		t.Errorf("got %v, want empty (wrap.valuesFiles bridge sunset in v0.3.0)", got)
@@ -285,30 +285,49 @@ func TestValidate_ReleaseRequiresNameAndNamespace(t *testing.T) {
 	})
 }
 
-// TestValidate_WrapRequiresNameAndVersion locks in the v0.3.0 rule:
-// a non-nil wrap section must carry both wrap.name and wrap.version.
-func TestValidate_WrapRequiresNameAndVersion(t *testing.T) {
-	t.Run("name-missing", func(t *testing.T) {
+// TestValidate_WrapHasNoRequiredFields locks in the namespace-split
+// rule: the wrapper lives under <downstream>/platform/ and reuses the
+// mirrored chart's name, so wrap.name is gone and wrap.version is
+// optional (defaults to the mirrored chart version). An empty wrap
+// section is valid; a version-only one is valid.
+func TestValidate_WrapHasNoRequiredFields(t *testing.T) {
+	t.Run("empty-wrap-ok", func(t *testing.T) {
 		f := validRepoFile()
-		f.Wrap = &Wrap{Version: "1.0"}
-		err := f.Validate()
-		if err == nil || !strings.Contains(err.Error(), "wrap.name") {
-			t.Errorf("Validate() = %v, want wrap.name error", err)
-		}
-	})
-	t.Run("version-missing", func(t *testing.T) {
-		f := validRepoFile()
-		f.Wrap = &Wrap{Name: "wrapper"}
-		err := f.Validate()
-		if err == nil || !strings.Contains(err.Error(), "wrap.version") {
-			t.Errorf("Validate() = %v, want wrap.version error", err)
-		}
-	})
-	t.Run("both-present-ok", func(t *testing.T) {
-		f := validRepoFile()
-		f.Wrap = &Wrap{Name: "wrapper", Version: "1.0"}
+		f.Wrap = &Wrap{}
 		if err := f.Validate(); err != nil {
 			t.Errorf("Validate() = %v, want nil", err)
 		}
 	})
+	t.Run("version-only-ok", func(t *testing.T) {
+		f := validRepoFile()
+		f.Wrap = &Wrap{Version: "1.19.3-myorg.2", ValuesFiles: []string{"x.yml"}}
+		if err := f.Validate(); err != nil {
+			t.Errorf("Validate() = %v, want nil", err)
+		}
+	})
+}
+
+// TestLoad_WarnsOnDeprecatedWrapName ensures a chart.json still carrying
+// the removed wrap.name field loads (field ignored) rather than erroring.
+func TestLoad_WarnsOnDeprecatedWrapName(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "chart.json")
+	const body = `{
+  "apiVersion": "mhelm.io/v1alpha1",
+  "mirror": {
+    "upstream": {"type": "oci", "url": "oci://quay.io/x/charts/c", "version": "1.0.0"},
+    "downstream": {"type": "oci", "url": "oci://ghcr.io/mirror/c"}
+  },
+  "wrap": {"name": "c-wrapped", "version": "1.0.0"}
+}`
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load() = %v, want nil (wrap.name should be ignored, not fatal)", err)
+	}
+	if f.Wrap == nil || f.Wrap.Version != "1.0.0" {
+		t.Errorf("wrap not parsed: %+v", f.Wrap)
+	}
 }

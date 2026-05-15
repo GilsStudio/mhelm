@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/gilsstudio/mhelm/internal/chartfile"
 	"github.com/gilsstudio/mhelm/internal/imagemirror"
 	"github.com/gilsstudio/mhelm/internal/lockfile"
 	"github.com/gilsstudio/mhelm/internal/mirror"
+	"github.com/gilsstudio/mhelm/internal/mirrorlayout"
 	"github.com/spf13/cobra"
 )
 
@@ -58,8 +58,10 @@ downstream refs and digests.`,
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "mirrored chart %s:%s → %s\n", res.ChartName, res.ChartVersion, res.DownstreamRef)
 
-		// 2. Mirror every image in lockfile.mirror.images[].
-		mirrorPrefix := strings.TrimPrefix(cf.Mirror.Downstream.URL, "oci://")
+		// 2. Mirror every image in lockfile.mirror.images[]. The images/
+		// namespace MUST match imagevalues.BuildTagBased's rewrite prefix
+		// — both go through mirrorlayout.ImagePrefix so they can't drift.
+		mirrorPrefix := mirrorlayout.ImagePrefix(cf.Mirror.Downstream.URL)
 		inputs := make([]imagemirror.Input, len(lf.Mirror.Images))
 		for i, img := range lf.Mirror.Images {
 			inputs[i] = imagemirror.Input{UpstreamRef: img.Ref, UpstreamDigest: img.Digest}

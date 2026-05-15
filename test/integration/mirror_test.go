@@ -34,6 +34,7 @@ import (
 	"github.com/gilsstudio/mhelm/internal/imagemirror"
 	"github.com/gilsstudio/mhelm/internal/lockfile"
 	"github.com/gilsstudio/mhelm/internal/mirror"
+	"github.com/gilsstudio/mhelm/internal/mirrorlayout"
 	"github.com/gilsstudio/mhelm/internal/wrap"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -183,7 +184,9 @@ func TestWrapEndToEnd(t *testing.T) {
 			},
 		},
 		Wrap: &chartfile.Wrap{
-			Name:    "tinychart-wrapped",
+			// No name: the wrapper reuses the mirrored chart's name
+			// ("tinychart") and lives under the platform/ namespace.
+			// Explicit version exercises the independent-release path.
 			Version: "0.1.0-myorg.1",
 		},
 	}
@@ -202,9 +205,22 @@ func TestWrapEndToEnd(t *testing.T) {
 		t.Fatalf("wrap.Run: %v", err)
 	}
 
-	// Wrapper pullable from the registry.
+	// Wrapper pullable from the registry, under platform/, named after
+	// the mirrored chart (not "<x>-wrapped").
+	wantWrapRef := mirrorlayout.PlatformRepo(cf.Mirror.Downstream.URL, "tinychart") + ":0.1.0-myorg.1"
+	if res.DownstreamRef != wantWrapRef {
+		t.Errorf("wrapper ref = %q, want %q", res.DownstreamRef, wantWrapRef)
+	}
+	if res.ChartName != "tinychart" {
+		t.Errorf("wrapper chart name = %q, want %q (reuses mirrored name)", res.ChartName, "tinychart")
+	}
 	if _, err := crane.Digest(res.DownstreamRef, crane.Insecure); err != nil {
 		t.Errorf("wrapper not pullable at %s: %v", res.DownstreamRef, err)
+	}
+	// The faithful mirror copy lives at the same coordinates but under
+	// charts/ — both must be independently pullable.
+	if _, err := crane.Digest(mirrorlayout.ChartRepo(cf.Mirror.Downstream.URL, "tinychart")+":0.1.0", crane.Insecure); err != nil {
+		t.Errorf("mirrored chart not pullable under charts/: %v", err)
 	}
 
 	// Persist wrap block + reload.
@@ -235,7 +251,7 @@ func TestWrapEndToEnd(t *testing.T) {
 	// Simpler path: load via Helm SDK after re-pulling.
 	pullEp := chartfile.Endpoint{
 		Type:    chartfile.TypeOCI,
-		URL:     "oci://" + registryAddr + "/mirror/tinychart-wrapped",
+		URL:     "oci://" + mirrorlayout.PlatformRepo(cf.Mirror.Downstream.URL, "tinychart"),
 		Version: "0.1.0-myorg.1",
 	}
 	pulled, err := chartpullPull(ctx, pullEp)
@@ -247,12 +263,22 @@ func TestWrapEndToEnd(t *testing.T) {
 		t.Fatalf("load wrapper chart: %v", err)
 	}
 
-	// Wrapper has the dep declared.
+	// Parent chart and its sole subchart now share the name "tinychart"
+	// (the namespace, not a name suffix, distinguishes faithful from
+	// hardened). Helm must still load the tree and resolve nested
+	// values — that this LoadArchive succeeded and the block below
+	// resolves is the regression guard for the same-name design.
+	if wrapperChart.Metadata.Name != "tinychart" {
+		t.Errorf("wrapper chart name = %q, want %q", wrapperChart.Metadata.Name, "tinychart")
+	}
 	if len(wrapperChart.Metadata.Dependencies) != 1 {
 		t.Fatalf("wrapper dependencies = %d, want 1", len(wrapperChart.Metadata.Dependencies))
 	}
 	if wrapperChart.Metadata.Dependencies[0].Name != "tinychart" {
 		t.Errorf("dep name = %q, want %q", wrapperChart.Metadata.Dependencies[0].Name, "tinychart")
+	}
+	if len(wrapperChart.Dependencies()) != 1 {
+		t.Errorf("loaded subcharts = %d, want 1 (same-name parent/subchart must still load)", len(wrapperChart.Dependencies()))
 	}
 
 	// Wrapper values are nested under "tinychart" and carry rewrites.
@@ -333,7 +359,7 @@ func runDiscoverMirror(ctx context.Context, t *testing.T, cf chartfile.File, wor
 		t.Fatalf("mirror.Run: %v", err)
 	}
 
-	mirrorPrefix := strings.TrimPrefix(cf.Mirror.Downstream.URL, "oci://")
+	mirrorPrefix := mirrorlayout.ImagePrefix(cf.Mirror.Downstream.URL)
 	inputs := make([]imagemirror.Input, len(lf.Mirror.Images))
 	for i, img := range lf.Mirror.Images {
 		inputs[i] = imagemirror.Input{UpstreamRef: img.Ref, UpstreamDigest: img.Digest}

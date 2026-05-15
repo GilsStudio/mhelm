@@ -22,6 +22,7 @@ import (
 
 	"github.com/gilsstudio/mhelm/internal/chartfile"
 	"github.com/gilsstudio/mhelm/internal/lockfile"
+	"github.com/gilsstudio/mhelm/internal/mirrorlayout"
 )
 
 // Candidate is one (values-path → image-ref) tuple discovered by mhelm
@@ -49,15 +50,18 @@ type Candidate struct {
 // single pinned ref string alongside the structured form (the escape
 // hatch charts like cilium expose to bypass per-cloud suffix concat).
 //
-// downstreamURL is chart.json#mirror.downstream.url; the oci:// prefix
-// is stripped.
+// downstreamURL is chart.json#mirror.downstream.url; rewrites point at
+// its images/ namespace (mirrorlayout.ImagePrefix) — the exact path
+// imagemirror pushed to.
 func BuildTagBased(
 	images []lockfile.Image,
 	extras []chartfile.ExtraImage,
 	merged map[string]any,
 	downstreamURL string,
 ) map[string]any {
-	prefix := strings.TrimPrefix(downstreamURL, "oci://")
+	// Same images/ namespace imagemirror pushed into — both via
+	// mirrorlayout.ImagePrefix so the rewrite can't miss the mirror.
+	prefix := mirrorlayout.ImagePrefix(downstreamURL)
 	out := map[string]any{}
 
 	for _, img := range images {

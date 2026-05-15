@@ -15,8 +15,12 @@ inputs:
   command:
     description: >-
       Operation to run: `mirror` (the full discover/verify/mirror/sign+attest
-      pipeline) or `drift` (just the read-only drift check writing findings
-      into chart-lock.json#drift).
+      pipeline), `dry-run` (discover --check + verify only — no mirror, no
+      signing, no commit; fails the job if the committed chart-lock.json /
+      image-values.yaml is stale, or with strict-verify on any unverified
+      image), or `drift` (the read-only drift check writing findings into
+      chart-lock.json#drift). dry-run writes/commits nothing — the caller
+      must not commit after a dry-run, and the action outputs are empty.
     required: false
     default: 'mirror'
   cosign-version:
@@ -98,13 +102,23 @@ runs:
       uses: anchore/scan-action/download-grype@v3
 
     - name: mhelm discover
-      if: inputs.command == 'mirror'
+      if: inputs.command == 'mirror' || inputs.command == 'dry-run'
       shell: bash
       working-directory: ${{ github.workspace }}
-      run: mhelm discover "${{ inputs.dir }}"
+      env:
+        COMMAND: ${{ inputs.command }}
+        DIR: ${{ inputs.dir }}
+      run: |
+        set -euo pipefail
+        if [ "$COMMAND" = "dry-run" ]; then
+          # exit 2 (stale lockfile) fails the job — that's the gate.
+          mhelm discover --check "$DIR"
+        else
+          mhelm discover "$DIR"
+        fi
 
     - name: mhelm verify
-      if: inputs.command == 'mirror' && inputs.verify == 'true'
+      if: (inputs.command == 'mirror' || inputs.command == 'dry-run') && inputs.verify == 'true'
       shell: bash
       working-directory: ${{ github.workspace }}
       env:

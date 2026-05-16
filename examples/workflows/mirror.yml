@@ -75,7 +75,7 @@ jobs:
 
       - name: Mirror with mhelm
         id: mhelm
-        uses: gilsstudio/mhelm@v0.7.0
+        uses: gilsstudio/mhelm@v0.8.0
         with:
           dir: ${{ matrix.chart }}
           # Set to "true" to fail the job when an upstream image is unsigned.

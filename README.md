@@ -244,7 +244,7 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: gilsstudio/mhelm@v0.7.0
+      - uses: gilsstudio/mhelm@v0.8.0
         with:
           dir: platform/cert-manager
 ```

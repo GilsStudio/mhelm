@@ -43,9 +43,21 @@ type WrapBlock struct {
 	Chart          WrapChart `json:"chart"`
 	DependsOn      WrapDep   `json:"dependsOn"`
 	DeployedImages []string  `json:"deployedImages,omitempty"`
-	Tool           string    `json:"tool"`
-	Version        string    `json:"version"`
-	Timestamp      time.Time `json:"timestamp"`
+	// InputsDigest is a stable hash over the full wrap input set
+	// (normalized chart.json, every discoveryValues / wrap.valuesFiles /
+	// wrap.extraManifests file, the resolved upstream chart digest, and
+	// the lock-schema version). Written by `mhelm wrap`. It is the anchor
+	// for two guarantees: `mhelm wrap` fails closed when this changes
+	// while wrap.version does not (same version must mean same bytes),
+	// and `mhelm discover --check` exits 2 when a recompute differs from
+	// the committed value (the PR gate is exhaustive over wrap inputs,
+	// not just the discovered image set). Empty in pre-v0.7 locks —
+	// recomputed with a one-time stderr warning, never a hard-fail on
+	// first encounter.
+	InputsDigest string    `json:"inputsDigest,omitempty"`
+	Tool         string    `json:"tool"`
+	Version      string    `json:"version"`
+	Timestamp    time.Time `json:"timestamp"`
 }
 
 // WrapChart identifies the wrapper artifact mhelm authored + pushed.
@@ -82,8 +94,8 @@ type DriftFinding struct {
 }
 
 const (
-	DriftKindUpstreamRotation    = "upstream-rotation"    // upstream now publishes different bytes under the same ref
-	DriftKindDownstreamTampered  = "downstream-tampered"  // downstream digest no longer matches what we mirrored
+	DriftKindUpstreamRotation    = "upstream-rotation"   // upstream now publishes different bytes under the same ref
+	DriftKindDownstreamTampered  = "downstream-tampered" // downstream digest no longer matches what we mirrored
 	DriftKindNewVersionAvailable = "new-version-available"
 	DriftKindUpstreamMissing     = "upstream-missing" // the pinned upstream entry no longer exists
 )

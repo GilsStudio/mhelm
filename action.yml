@@ -24,6 +24,20 @@ inputs:
       must not commit after a dry-run, and the action outputs are empty.
     required: false
     default: 'mirror'
+  commit:
+    description: >-
+      Mirror mode only. Commit the updated chart-lock.json (and
+      image-values.yaml when present) back to the checked-out branch
+      after mirror+wrap. Default-on because it makes behaviour match the
+      documented contract — consumers no longer hand-roll a git step (and
+      get its untracked-first-run guard wrong). Set `false` to opt out
+      when you manage the commit yourself (e.g. a create-pull-request
+      flow); doing both double-commits. Requires the calling job to
+      checkout with a push-capable token and persist-credentials on, and
+      `permissions: contents: write`. dry-run/drift never commit
+      regardless. The drift branch+PR flow stays the caller's job.
+    required: false
+    default: 'true'
   cosign-version:
     description: 'cosign release to install (e.g. v2.6.3, or "latest").'
     required: false
@@ -283,6 +297,28 @@ runs:
         done
 
         rm -f "$SBOM" "$VULN"
+
+    # Implement the documented contract: mhelm commits the lock so
+    # consumers never write (and mis-write) git glue. Runs after
+    # mirror+wrap+sign so the commit reflects the fully mirrored,
+    # wrapped, fingerprinted lock. `mhelm commit-lock` stages first then
+    # `git diff --cached --quiet`, so a brand-new untracked lock on the
+    # first run is committed (not silently discarded), and an unchanged
+    # lock is a clean no-op (no empty commit). dry-run/drift never reach
+    # here (gated on command == mirror); drift's branch+PR flow is the
+    # caller's job. [skip ci] on the message stops a recursive mirror.
+    - name: Commit chart-lock.json
+      if: inputs.command == 'mirror' && inputs.commit == 'true'
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      env:
+        DIR: ${{ inputs.dir }}
+      run: |
+        set -euo pipefail
+        mhelm commit-lock "$DIR" \
+          --git-name 'github-actions[bot]' \
+          --git-email 'github-actions[bot]@users.noreply.github.com' \
+          --push
 
     - name: mhelm drift
       if: inputs.command == 'drift'

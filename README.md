@@ -67,7 +67,7 @@ LAPTOP — read-only, no credentials          CI — writes + signs (OIDC)
 
 5. **Commit + open a PR** — commit `chart.json`, `chart-lock.json`, `image-values.yaml`. Gate the PR with the Action in **`dry-run`** mode (`command: dry-run` → `discover --check` + `verify`, no writes/signing/commit): a stale lockfile fails the check, forcing fresh discover output before merge. This is the CI counterpart of step 4, wired by [`dry-run.yml`](examples/workflows/dry-run.yml).
 
-6. **Land it → CI mirrors.** When the `chart.json` change lands on your default branch, [`mirror.yml`](examples/workflows/mirror.yml) (a `platform/**/chart.json` matrix) runs the full pipeline — discover → verify → mirror → wrap → provenance → slsa → cosign sign + attest (SBOM / vuln / SLSA / MirrorProvenance) — pushes chart + every image to your downstream registry, then opens a PR with the updated `chart-lock.json` / `image-values.yaml` / `mirror-provenance.json` (review the digest diff, merge to record the mirror in git). Details: [Canonical CI sequence](#canonical-ci-sequence), [GitHub Action](#github-action).
+6. **Land it → CI mirrors.** When the `chart.json` change lands on your default branch, [`mirror.yml`](examples/workflows/mirror.yml) (a `platform/**/chart.json` matrix) runs the full pipeline — discover → verify → mirror → wrap → provenance → slsa → cosign sign + attest (SBOM / vuln / SLSA / MirrorProvenance) — pushes chart + every image to your downstream registry, then **commits the updated `chart-lock.json` / `image-values.yaml` straight back to the branch** (`commit` input, default on; `[skip ci]` so it doesn't re-trigger). The lockfile diff is the mirror record. Details: [Lockfile commit & staleness](#lockfile-commit--staleness), [Canonical CI sequence](#canonical-ci-sequence), [GitHub Action](#github-action).
 
 7. **Ongoing drift.** [`drift.yml`](examples/workflows/drift.yml) runs nightly and opens a PR per chart on upstream rotation, downstream tampering, or a new upstream version. Review it, bump `mirror.upstream.version`, and the loop returns to step 3.
 
@@ -84,7 +84,7 @@ LAPTOP — read-only, no credentials          CI — writes + signs (OIDC)
 | File | Producer | Committed | Role |
 |---|---|---|---|
 | `chart.json` | User | Yes | Input spec (`apiVersion: mhelm.io/v1alpha1`): `mirror` (upstream/downstream/discoveryValues/extraImages/verify/vulnPolicy), optional `wrap`, optional `release` |
-| `chart-lock.json` | CLI + Action | Yes | Source of truth: chart digests, image list + per-image source/digest/values-paths/signature/downstream, drift records |
+| `chart-lock.json` | CLI + Action | Yes | Source of truth: chart digests, image list + per-image source/digest/values-paths/signature/downstream, `wrap.inputsDigest` (staleness anchor), drift records. Committed by the Action (`commit` input, default on) |
 | `image-values.yaml` | `mhelm discover` | Yes | Sparse `helm install --values` override that points each matched values path at the mirror (skipped when a `wrap` section is configured) |
 | `mirror-provenance.json` | `mhelm provenance` | (CI artifact) | Custom `mhelm.dev/MirrorProvenance/v1` predicate fed to `cosign attest` |
 | `slsa-provenance.json` | `mhelm slsa` | (CI artifact) | SLSA v1 build provenance predicate fed to `cosign attest --type slsaprovenance1` |
@@ -159,7 +159,7 @@ in the nested form:
 | `mirror.verify.trustedIdentities` | no | Allowlist for `mhelm verify`. When set, only matching cosign signatures are accepted. |
 | `mirror.verify.allowUnsigned` | no | Repository paths exempt from verification (recorded `type=allowlisted`). |
 | `mirror.vulnPolicy` | no | `failOn` (`critical`/`high`/`medium`/`never`) + `allowlist[{cve,expires,reason}]` for `mhelm vuln-gate`. |
-| `wrap` | no | Author a wrapper chart depending on the mirror (`version`, `valuesFiles`, `extraManifests`). The wrapper reuses the mirrored chart's name under the `platform/` namespace; `version` is optional (defaults to the mirrored chart's version — set it to re-release independently). Image rewrites are auto-derived from the lockfile. |
+| `wrap` | no | Author a wrapper chart depending on the mirror (`version`, `valuesFiles`, `extraManifests`). The wrapper reuses the mirrored chart's name under the `platform/` namespace; `version` is optional (defaults to the mirrored chart's version — set it to re-release independently). Image rewrites are auto-derived from the lockfile. `mhelm wrap` records a `wrap.inputsDigest` in `chart-lock.json` and **fails closed** if these inputs change while `version` is unchanged (bump `version`, or pass `--allow-version-reuse`) — see [Lockfile commit & staleness](#lockfile-commit--staleness). |
 | `release` | no | Deploy-time ergonomics for `mhelm release print-install` (`name`, `namespace`, `valuesFiles`). |
 
 ## Commands
@@ -171,6 +171,7 @@ mhelm discover --check [dir]   compute artifacts but don't write; exit 2 if they
 mhelm verify [dir]             cosign-verify every upstream image; record signature data in chart-lock.json (--strict to fail)
 mhelm mirror [dir]             push chart + every image to downstream OCI; record downstream refs/digests
 mhelm wrap [dir]               author + push a wrapper chart depending on the mirror (no-op without a wrap section)
+mhelm commit-lock [dir]        stage + commit chart-lock.json (+ image-values.yaml) to the checked-out branch (--push, --git-name/-email)
 mhelm release init [dir]       scaffold the chart.json release section
 mhelm release print-install [dir]  emit a runnable `helm upgrade --install` against the locked artifact
 mhelm provenance [dir]         write mirror-provenance.json (custom MirrorProvenance predicate)
@@ -194,7 +195,8 @@ mhelm provenance → MirrorProvenance predicate
 mhelm slsa       → SLSA v1 predicate
 mhelm refs       → ref@digest lines feeding cosign sign + attest
 cosign sign + attest (SBOM via syft, vuln via grype, SLSA, MirrorProvenance)  [GHA only]
-mhelm drift (scheduled) → drift records committed via PR
+mhelm commit-lock → commit chart-lock.json + image-values.yaml to HEAD  [GHA only]
+mhelm drift (scheduled) → drift records committed via PR (caller's job, not commit-lock)
 ```
 
 `discover`, `verify`, `provenance`, `slsa`, `refs`, `drift` are all network-read-only. `mirror` performs registry writes. `cosign sign + attest` run only in CI with ambient OIDC.
@@ -238,10 +240,16 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: gilsstudio/mhelm@v0.6.0
+      - uses: gilsstudio/mhelm@v0.7.0
         with:
           dir: platform/cert-manager
 ```
+
+No commit step: as of **v0.7.0** the Action commits the updated
+`chart-lock.json` / `image-values.yaml` back to the checked-out branch
+itself (input `commit`, default `true`). The minimal workflow above is
+complete and correct as written — you do not (and must not also)
+hand-roll a git commit step. See [Lockfile commit & staleness](#lockfile-commit--staleness).
 
 ### Inputs
 
@@ -249,6 +257,7 @@ jobs:
 |---|---|---|
 | `dir` | (required) | Directory containing `chart.json`, relative to checkout root. |
 | `command` | `mirror` | `mirror` (full pipeline), `dry-run` (`discover --check` + `verify` only — no mirror/sign/commit; fails on a stale lockfile), or `drift` (read-only divergence check). |
+| `commit` | `true` | Mirror mode only. Commit the updated `chart-lock.json` (+ `image-values.yaml`) back to the checked-out branch after mirror+wrap. Default-on so behaviour matches the documented contract. Set `false` if you manage the commit yourself (e.g. a create-pull-request flow) — doing both double-commits. `dry-run`/`drift` never commit regardless. |
 | `cosign-version` | `v2.6.3` | cosign release to install. |
 | `sign` | `true` | Mirror mode: sign + attest every downstream artifact. |
 | `verify` | `true` | Mirror/dry-run mode: run `mhelm verify` between discover and mirror. |
@@ -257,6 +266,79 @@ jobs:
 | `drift-exit-zero` | `true` | Drift mode: exit 0 on findings (PR-friendly). Set `false` to fail the job. |
 
 Outputs: `lockfile`, `mirror-values` (path to the generated `image-values.yaml`; the output id is kept for backward compatibility), `provenance` — absolute paths to the generated files. Empty in `dry-run` mode (no artifacts written).
+
+### Lockfile commit & staleness
+
+**The Action commits the lockfile.** Since **v0.7.0**, mirror mode runs
+`mhelm commit-lock` after mirror+wrap+sign: it stages
+`<dir>/chart-lock.json` (and `<dir>/image-values.yaml` when present),
+then commits and pushes to the **checked-out** branch (HEAD — never a
+hardcoded `main`, so `workflow_dispatch` on a feature branch commits
+*there*). Requires `permissions: contents: write` and a checkout with a
+push-capable token (`persist-credentials` left on, the `actions/checkout`
+default).
+
+- **The git guard is the point.** `commit-lock` stages *first*, then runs
+  `git diff --cached --quiet`. The hand-rolled
+  `git diff --quiet -- <dir>/chart-lock.json` guard consumers used to
+  write is blind to untracked files, so on the **first** run (no lock in
+  HEAD yet) it reported "no changes" and silently discarded the freshly
+  generated lock. Staging first makes a brand-new lock commit, a modified
+  lock commit, and an unchanged lock a clean no-op (no empty commit).
+- **`[skip ci]`** is in the default commit message so the lockfile commit
+  does not re-trigger a path-filtered `mirror` workflow.
+- **Concurrent pushes**: `commit-lock` runs `git pull --rebase --autostash`
+  before `git push`, closing the non-fast-forward window against a
+  concurrent human push.
+- **`dry-run` commits nothing** (no mirror, no sign, no commit) — its
+  outputs are empty; the caller must not commit after a dry-run.
+- **Drift is the caller's job.** `command: drift` writes
+  `chart-lock.json#drift` but does **not** commit it — drift uses a
+  branch+PR model (see [`drift.yml`](examples/workflows/drift.yml)),
+  deliberately different from mirror's direct-to-branch commit. M1's
+  commit covers mirror only.
+- **Opting out**: set `commit: false` if you run your own
+  create-pull-request step; running both double-commits. `mhelm commit-lock`
+  is also a standalone subcommand for non-Actions CI / local use.
+
+**Staleness is a tool guarantee (wrap charts).** `mhelm wrap` records a
+`wrap.inputsDigest` in the lockfile — a stable hash over the full wrap
+input set (normalized `chart.json`, every `discoveryValues` /
+`wrap.valuesFiles` / `wrap.extraManifests` file, the resolved upstream
+chart digest, the lock-schema version). Two guarantees follow:
+
+- **`mhelm wrap` fails closed** if the inputs change while `wrap.version`
+  is unchanged ("same version must mean same bytes" — immutable
+  re-release). Bump `wrap.version`, or pass `--allow-version-reuse` for a
+  deliberate in-place re-release. This makes a stale wrapper *impossible
+  to publish*.
+- **`mhelm discover --check`** (the PR gate) recomputes the fingerprint
+  and exits **2** when it differs from the committed one — so a
+  `helm/values.yml` toggle or extra-manifest edit that doesn't move the
+  image set no longer slips through. A wrap-input-changing PR is expected
+  to go red here until it lands and the mirror republishes; bump
+  `wrap.version` in the same PR.
+
+A pre-v0.7 lock has no `wrap.inputsDigest`: it is recomputed with a
+one-time stderr warning and **never hard-fails on first encounter**
+(mhelm's auto-migrate ethos). `discover --check` reports `skip` for it
+until the next `mhelm mirror` records the fingerprint.
+
+**Exit codes** for the edge cases that produced real outages:
+
+| Command | Situation | Behaviour |
+|---|---|---|
+| `discover --check` | no committed lock | "would create" → exit **2** (a PR adding a component without a committed lock correctly fails the gate) |
+| `discover --check` | lock/image-values would change | exit **2** with a ref→digest delta |
+| `discover --check` | wrap inputs changed vs committed `inputsDigest` | exit **2** |
+| `discover --check` | in sync | exit **0** |
+| `discover --check` | operational error (network, parse) | exit **1** |
+| `drift` | no committed lock | explicit error + non-zero, "run `mhelm mirror` first" — never a silent no-op (even with `--exit-zero`) |
+| `wrap` | inputs changed, `wrap.version` reused | error + non-zero unless `--allow-version-reuse` |
+
+Full normative spec: [`docs/lockfile-and-staleness.md`](docs/lockfile-and-staleness.md).
+Migration when re-pinning: [`UPGRADING.md`](UPGRADING.md) ·
+[`CHANGELOG.md`](CHANGELOG.md).
 
 ### Per-artifact attestation chain
 

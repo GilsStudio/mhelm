@@ -83,7 +83,7 @@ LAPTOP — read-only, no credentials          CI — writes + signs (OIDC)
 
 | File | Producer | Committed | Role |
 |---|---|---|---|
-| `chart.json` | User | Yes | Input spec (`apiVersion: mhelm.io/v1alpha1`): `mirror` (upstream/downstream/discoveryValues/extraImages/verify/vulnPolicy), optional `wrap`, optional `release` |
+| `chart.json` | User | Yes | Input spec (`apiVersion: mhelm.io/v1alpha1`): `mirror` (upstream/downstream/discoveryValues/extraImages/excludeImages/verify/vulnPolicy), optional `wrap`, optional `release` |
 | `chart-lock.json` | CLI + Action | Yes | Source of truth: chart digests, image list + per-image source/digest/values-paths/signature/downstream, `wrap.inputsDigest` (staleness anchor), drift records. Committed by the Action (`commit` input, default on) |
 | `image-values.yaml` | `mhelm discover` | Yes | Sparse `helm install --values` override that points each matched values path at the mirror (skipped when a `wrap` section is configured) |
 | `mirror-provenance.json` | `mhelm provenance` | (CI artifact) | Custom `mhelm.dev/MirrorProvenance/v1` predicate fed to `cosign attest` |
@@ -129,6 +129,9 @@ in the nested form:
     "extraImages": [
       { "ref": "quay.io/cephcsi/cephcsi:v3.12.2", "valuesPath": "csi.cephcsi.image" }
     ],
+    "excludeImages": [
+      { "repo": "ghcr.io/prometheus-community/windows-exporter", "reason": "Linux-only cluster; windowsMonitoring disabled" }
+    ],
     "verify": {
       "trustedIdentities": [
         { "subjectRegex": "https://github.com/cert-manager/.*", "issuer": "https://token.actions.githubusercontent.com" }
@@ -156,6 +159,7 @@ in the nested form:
 | `mirror.downstream.url` | yes | Target registry path **without** the chart name. mhelm namespaces artifacts beneath it: `charts/<chart>` (faithful copy), `platform/<chart>` (wrapper), `images/<upstream-path>` (every image). |
 | `mirror.discoveryValues` | no | YAML files merged in order during `discover` so rendered manifests match what you'll deploy. |
 | `mirror.extraImages` | no | Manual list `[{ref, valuesPath?, overridePath?, reason?}]` for images discovery can't auto-find. `overridePath` emits the whole pinned ref as a single string (e.g. cilium's `image.override`). |
+| `mirror.excludeImages` | no | Inverse of `extraImages`: manual drop list `[{repo, reason}]` for an image discovery *finds* but the cluster never runs (e.g. a Windows-only image on a Linux cluster). `repo` is matched against the canonical repository path (exact, no globs); `reason` is required. Excluded images never enter `chart-lock.json` — never mirrored, signed, or scanned. Use this when `discoveryValues` can't help: images from a chart's `artifacthub.io/images` annotation are added unconditionally. |
 | `mirror.verify.trustedIdentities` | no | Allowlist for `mhelm verify`. When set, only matching cosign signatures are accepted. |
 | `mirror.verify.allowUnsigned` | no | Repository paths exempt from verification (recorded `type=allowlisted`). |
 | `mirror.vulnPolicy` | no | `failOn` (`critical`/`high`/`medium`/`never`) + `allowlist[{cve,expires,reason}]` for `mhelm vuln-gate`. |

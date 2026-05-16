@@ -114,8 +114,12 @@ func Run(ctx context.Context, cf chartfile.File, baseDir string) (Result, error)
 		})
 	}
 
-	// 4. Validate, dedupe, label sources.
-	res.Images = validateAndDedupe(cands)
+	// 4. Validate, dedupe, label sources, then drop any image the user
+	// explicitly excluded. Filtering here — before values-matching and
+	// the mirror-values build — is the single choke point: an excluded
+	// image never reaches chart-lock.json, so it is never mirrored,
+	// signed, or scanned.
+	res.Images = filterExcluded(validateAndDedupe(cands), cf.Mirror.ExcludeImages)
 
 	// 5. Match each image to values paths in the chart's merged values, and
 	// build the sparse mirror-values override.
@@ -195,6 +199,27 @@ func FindRenderedImages(c *chart.Chart, valuesFiles []string, baseDir string) ([
 		}
 	}
 	return refs, merged, nil
+}
+
+// filterExcluded drops images whose canonical repository path matches a
+// mirror.excludeImages entry. Exact canonical-repo match, no globs —
+// same convention as verify.allowUnsigned. Pure logic, no network.
+func filterExcluded(images []lockfile.Image, exclude []chartfile.ExcludeImage) []lockfile.Image {
+	if len(exclude) == 0 {
+		return images
+	}
+	skip := make(map[string]bool, len(exclude))
+	for _, e := range exclude {
+		skip[canonicalRepo(e.Repo)] = true
+	}
+	var out []lockfile.Image
+	for _, img := range images {
+		if skip[canonicalRepo(img.Ref)] {
+			continue
+		}
+		out = append(out, img)
+	}
+	return out
 }
 
 // renderChart returns the rendered template output and the merged Values

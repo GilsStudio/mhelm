@@ -5,6 +5,21 @@ backward-compat ethos: old `chart.json` / `chart-lock.json` shapes keep
 working and are migrated in memory. The notes below call out the few
 places a consumer must change something on a major/minor bump.
 
+## v0.7 → v0.8
+
+Purely additive — re-pinning to v0.8.0 needs no changes. v0.8.0 adds
+the optional `mirror.excludeImages` field (the inverse of
+`mirror.extraImages`): a `[{repo, reason}]` drop list for an image
+discovery *finds* but the cluster never runs (e.g. a Windows-only image
+on a Linux cluster), which previously hard-failed the Action's sign step
+because syft/grype default to `linux/amd64`.
+
+**Optional, only if you adopt it:** after adding `excludeImages` to a
+`chart.json`, run `mhelm discover` (or let the Action's mirror run) to
+refresh `chart-lock.json`. The discovered set changed, so until you do,
+`mhelm discover --check` (the dry-run gate) correctly exits 2 reporting
+the lock stale.
+
 ## v0.6 → v0.7
 
 v0.7.0 makes the long-documented "the Action commits lockfile updates"

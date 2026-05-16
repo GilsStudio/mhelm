@@ -45,12 +45,13 @@ type File struct {
 // Mirror owns transport: upstream identity, downstream destination,
 // discovery surface, signature policy, vulnerability policy.
 type Mirror struct {
-	Upstream        Endpoint     `json:"upstream"`
-	Downstream      Endpoint     `json:"downstream"`
-	DiscoveryValues []string     `json:"discoveryValues,omitempty"`
-	ExtraImages     []ExtraImage `json:"extraImages,omitempty"`
-	Verify          Verify       `json:"verify,omitempty"`
-	VulnPolicy      *VulnPolicy  `json:"vulnPolicy,omitempty"`
+	Upstream        Endpoint       `json:"upstream"`
+	Downstream      Endpoint       `json:"downstream"`
+	DiscoveryValues []string       `json:"discoveryValues,omitempty"`
+	ExtraImages     []ExtraImage   `json:"extraImages,omitempty"`
+	ExcludeImages   []ExcludeImage `json:"excludeImages,omitempty"`
+	Verify          Verify         `json:"verify,omitempty"`
+	VulnPolicy      *VulnPolicy    `json:"vulnPolicy,omitempty"`
 }
 
 // Verify is the signature-policy surface.
@@ -115,6 +116,22 @@ type ExtraImage struct {
 	// chart can bypass its own per-cloud suffix concatenation.
 	OverridePath string `json:"overridePath,omitempty"`
 	Reason       string `json:"reason,omitempty"`
+}
+
+// ExcludeImage drops a discovered image from the mirror set. It is the
+// inverse of ExtraImage: the manual escape hatch for an image automated
+// discovery *finds* (commonly via the publisher-declared
+// artifacthub.io/images annotation, which is unconditional and so isn't
+// suppressed by discoveryValues) but the cluster will never run — e.g. a
+// Windows-only image on a Linux-only cluster. Repo is matched against the
+// canonical repository path of each discovered ref (exact, no globs —
+// same convention as Verify.AllowUnsigned). Excluded images never enter
+// chart-lock.json, so they are never mirrored, signed, or scanned.
+// Reason is required and recorded in the supply-chain audit trail so the
+// answer to "why is this upstream image NOT mirrored?" is never silent.
+type ExcludeImage struct {
+	Repo   string `json:"repo"`
+	Reason string `json:"reason"`
 }
 
 // Release is the deploy-time ergonomics surface — used by
@@ -300,6 +317,14 @@ func (f File) Validate() error {
 		}
 		if e.OverridePath != "" && e.OverridePath == e.ValuesPath {
 			return fmt.Errorf("mirror.extraImages[%d]: overridePath must differ from valuesPath", i)
+		}
+	}
+	for i, e := range f.Mirror.ExcludeImages {
+		if e.Repo == "" {
+			return fmt.Errorf("mirror.excludeImages[%d].repo is required", i)
+		}
+		if e.Reason == "" {
+			return fmt.Errorf("mirror.excludeImages[%d].reason is required", i)
 		}
 	}
 	// wrap needs no required fields: the wrapper inherits the mirrored

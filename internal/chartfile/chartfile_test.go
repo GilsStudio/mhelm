@@ -81,6 +81,15 @@ func TestValidate(t *testing.T) {
 		{"extra-image-override-only-ok", func(f *File) {
 			f.Mirror.ExtraImages = []ExtraImage{{Ref: "r/a:1", OverridePath: "x.image.override"}}
 		}, ""},
+		{"exclude-image-missing-repo", func(f *File) {
+			f.Mirror.ExcludeImages = []ExcludeImage{{Repo: "", Reason: "windows-only"}}
+		}, "mirror.excludeImages[0].repo is required"},
+		{"exclude-image-missing-reason", func(f *File) {
+			f.Mirror.ExcludeImages = []ExcludeImage{{Repo: "ghcr.io/prometheus-community/windows-exporter"}}
+		}, "mirror.excludeImages[0].reason is required"},
+		{"exclude-image-ok", func(f *File) {
+			f.Mirror.ExcludeImages = []ExcludeImage{{Repo: "ghcr.io/prometheus-community/windows-exporter", Reason: "Linux-only cluster"}}
+		}, ""},
 		{"apiversion-invalid", func(f *File) { f.APIVersion = "mhelm.io/v999" }, `apiVersion "mhelm.io/v999" invalid`},
 	}
 	for _, tc := range cases {

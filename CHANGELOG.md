@@ -5,6 +5,33 @@ All notable changes to mhelm. This project follows the
 ethos; behaviour changes ship as a new minor. See
 [UPGRADING.md](UPGRADING.md) for migration steps.
 
+## v0.8.0
+
+Additive: a manual drop list for discovered images the cluster will
+never run. No behaviour change for existing `chart.json` files.
+
+### Added
+
+- **`mirror.excludeImages`** — the inverse of `mirror.extraImages`: a
+  manual drop list `[{repo, reason}]` for an image discovery *finds* but
+  the cluster will never run (e.g. `windows-exporter` from
+  kube-prometheus-stack on a Linux-only cluster). The image is dropped at
+  discovery time — before values-matching and the mirror-values build —
+  so it never enters `chart-lock.json` and is therefore never mirrored,
+  signed, or scanned (previously such an image hard-failed the Action's
+  sign step: syft/grype default to `linux/amd64` and a Windows-only
+  index has no such child). `repo` is matched against the **canonical
+  repository path** of each discovered ref (exact, no globs — same
+  convention as `verify.allowUnsigned`), so a tag/digest on the ref is
+  ignored and Docker Hub implicit prefixes normalize on both sides.
+  `reason` is **required** and recorded in the supply-chain audit trail.
+  Solves the case `discoveryValues` cannot: the publisher-declared
+  `artifacthub.io/images` annotation is unconditional, so an image
+  listed there enters the mirror set regardless of any values toggle.
+  Purely additive — existing `chart.json` files are unaffected. Adding
+  the field changes the discovered set, so `mhelm discover --check`
+  correctly reports the lock stale until re-discovered (expected).
+
 ## v0.7.0
 
 Behaviour change: the Action now commits the lockfile (implementing the

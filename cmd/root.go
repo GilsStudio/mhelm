@@ -33,6 +33,7 @@ func init() {
 	rootCmd.AddCommand(verifyCmd)
 	rootCmd.AddCommand(mirrorCmd)
 	rootCmd.AddCommand(wrapCmd)
+	rootCmd.AddCommand(commitLockCmd)
 	rootCmd.AddCommand(releaseCmd)
 	rootCmd.AddCommand(provenanceCmd)
 	rootCmd.AddCommand(slsaCmd)

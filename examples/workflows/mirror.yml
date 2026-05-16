@@ -5,21 +5,28 @@
 #   platform/
 #     cert-manager/
 #       chart.json
-#       chart-lock.json     (generated, committed)
-#       image-values.yaml  (generated, committed)
+#       chart-lock.json     (generated, committed by the action)
+#       image-values.yaml  (generated, committed by the action)
 #     cilium/
 #       chart.json
 #       ...
 #
 # The matrix mirrors each chart in parallel. Each job:
-#   1. Checks out the platform repo.
+#   1. Checks out the platform repo (actions/checkout's default
+#      persist-credentials leaves a push-capable token in place).
 #   2. Logs in to GHCR (or whichever registry chart.json#downstream.url points at).
 #   3. Runs the mhelm composite action, which discovers → verifies → mirrors →
-#      cosign-signs + attests every artifact.
-#   4. Opens a PR with the updated chart-lock.json / image-values.yaml /
-#      mirror-provenance.json — review the digest diff, then merge to record
-#      the mirror in git (consistent with drift.yml and the
-#      "every change is a reviewable PR" model).
+#      wraps → cosign-signs + attests every artifact, then COMMITS the updated
+#      chart-lock.json / image-values.yaml straight back to this branch
+#      (commit input, default true; the message carries [skip ci] so the
+#      lockfile commit does not re-trigger this workflow). The committed
+#      lockfile diff IS the mirror record.
+#
+# As of mhelm v0.7.0 the action owns the lockfile commit. Do NOT also add a
+# create-pull-request / git commit step — that double-commits. To keep a
+# PR-review flow instead of direct-to-branch, set `commit: 'false'` on the
+# action and add your own create-pull-request step (and restore
+# `pull-requests: write`).
 
 name: Mirror Helm charts
 
@@ -32,10 +39,10 @@ on:
       - '.github/workflows/mirror.yml'
   workflow_dispatch:
 
-# These permissions are required by the mhelm action when sign=true (the default).
+# Permissions required by the mhelm action when sign=true and commit=true
+# (both default).
 permissions:
-  contents: write        # create-pull-request pushes the lockfile branch
-  pull-requests: write   # ...and opens the PR with the lockfile updates
+  contents: write        # mhelm commit-lock pushes the lockfile to this branch
   packages: write        # push chart + images to ghcr.io
   id-token: write        # cosign keyless via OIDC → Fulcio → Rekor
 
@@ -55,6 +62,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          # Full history so commit-lock's `git pull --rebase --autostash`
+          # before push rebases cleanly against a concurrent push.
           fetch-depth: 0
 
       - name: Login to GHCR
@@ -66,26 +75,10 @@ jobs:
 
       - name: Mirror with mhelm
         id: mhelm
-        uses: gilsstudio/mhelm@v0.6.0
+        uses: gilsstudio/mhelm@v0.7.0
         with:
           dir: ${{ matrix.chart }}
           # Set to "true" to fail the job when an upstream image is unsigned.
           strict-verify: 'false'
-
-      - name: Open PR with lockfile updates
-        uses: peter-evans/create-pull-request@v6
-        with:
-          branch: mirror/${{ matrix.chart }}
-          title: 'chore(mirror): update lockfile for ${{ matrix.chart }}'
-          commit-message: 'chore(mirror): update lockfile for ${{ matrix.chart }}'
-          add-paths: |
-            ${{ matrix.chart }}/chart-lock.json
-            ${{ matrix.chart }}/image-values.yaml
-            ${{ matrix.chart }}/mirror-provenance.json
-          body: |
-            Automated mirror refreshed the pinned digests / downstream refs
-            for `${{ matrix.chart }}`.
-
-            Review the `chart-lock.json` diff — every changed digest is a
-            real upstream or downstream content change. Merging records the
-            mirror operation in git (the lockfile is the source of truth).
+          # commit: 'true' is the default — the action commits the updated
+          # chart-lock.json / image-values.yaml back to this branch.

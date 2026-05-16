@@ -1,8 +1,11 @@
 # Scheduled drift check across every chart.json in the platform repo.
 #
-# For each chart, runs `mhelm drift` (read-only) and commits the updated
-# chart-lock.json#drift section. Reviewers see the drift findings in the
-# auto-opened PR.
+# For each chart, runs `mhelm drift` (read-only) which writes the
+# chart-lock.json#drift section, then opens a PR with it. This branch+PR
+# flow is deliberately the caller's responsibility and is distinct from
+# mirror.yml's direct-to-branch lockfile commit: the mhelm action's
+# `commit` input covers mirror only, never drift. Reviewers see the drift
+# findings in the auto-opened PR.
 #
 # Drift modes detected:
 #   - upstream-rotation     upstream re-published different bytes under the
@@ -41,7 +44,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: mhelm drift
-        uses: gilsstudio/mhelm@v0.6.0
+        uses: gilsstudio/mhelm@v0.7.0
         with:
           dir: ${{ matrix.chart }}
           command: drift

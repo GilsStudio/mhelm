@@ -11,6 +11,7 @@ import (
 	"github.com/gilsstudio/mhelm/internal/chartfile"
 	"github.com/gilsstudio/mhelm/internal/discover"
 	"github.com/gilsstudio/mhelm/internal/lockfile"
+	"github.com/gilsstudio/mhelm/internal/wrapfp"
 	"github.com/spf13/cobra"
 	"sigs.k8s.io/yaml"
 )
@@ -87,7 +88,7 @@ ignored by the comparison — only the discovered content matters.`,
 		}
 
 		if discoverCheck {
-			return runCheck(cmd, imageValuesPath, prior, priorExists, candidate, imgVals, imgSkip)
+			return runCheck(cmd, dir, cf, imageValuesPath, prior, priorExists, candidate, imgVals, imgSkip)
 		}
 
 		if err := os.WriteFile(lockPath, lockBytes, 0o644); err != nil {
@@ -160,8 +161,11 @@ func normForCompare(f lockfile.File) lockfile.File {
 }
 
 // runCheck compares the would-be artifacts against what's committed and
-// exits 2 if they differ (0 = in sync, 1 = operational error).
-func runCheck(cmd *cobra.Command, imageValuesPath string, prior lockfile.File, priorExists bool, candidate lockfile.File, imgVals []byte, imgSkip string) error {
+// exits 2 if they differ (0 = in sync, 1 = operational error). When a
+// wrap section is configured it additionally recomputes the wrap inputs
+// fingerprint so the gate is exhaustive over wrap inputs, not just the
+// discovered image set.
+func runCheck(cmd *cobra.Command, dir string, cf chartfile.File, imageValuesPath string, prior lockfile.File, priorExists bool, candidate lockfile.File, imgVals []byte, imgSkip string) error {
 	out := cmd.OutOrStdout()
 	stale := false
 
@@ -212,8 +216,33 @@ func runCheck(cmd *cobra.Command, imageValuesPath string, prior lockfile.File, p
 		}
 	}
 
+	// Wrap inputs fingerprint: a wrap-input change (a helm/values.yml
+	// toggle, an extra-manifest edit) that doesn't move the image set is
+	// invisible to the lockfile diff above but still makes the published
+	// wrapper stale. Recompute and compare to the committed anchor.
+	if cf.Wrap != nil {
+		fp, err := wrapfp.Compute(cf, dir, candidate.Mirror.Upstream.ChartContentDigest, lockfile.APIVersion)
+		if err != nil {
+			return err
+		}
+		switch {
+		case prior.Wrap == nil || prior.Wrap.InputsDigest == "":
+			// Pre-v0.7 lock (or no wrap recorded yet): no committed
+			// anchor to compare. Soft-land — don't fail the gate; it
+			// engages once `mhelm wrap` records the fingerprint.
+			fmt.Fprintf(out, "wrap.inputsDigest: skip (not recorded yet — re-run `mhelm mirror` to record it)\n")
+		case prior.Wrap.InputsDigest == fp:
+			fmt.Fprintln(out, "wrap.inputsDigest: OK")
+		default:
+			fmt.Fprintln(out, "wrap.inputsDigest: would change — wrap inputs changed since the published wrapper")
+			fmt.Fprintf(out, "  committed:  %s\n  recomputed: %s\n", prior.Wrap.InputsDigest, fp)
+			fmt.Fprintln(out, "  bump wrap.version; the mirror republishes the wrapper on merge")
+			stale = true
+		}
+	}
+
 	if stale {
-		fmt.Fprintln(out, "stale — re-run `mhelm discover` and commit the result")
+		fmt.Fprintln(out, "stale — re-run `mhelm discover` (and `mhelm mirror` for wrap changes) and commit the result")
 		os.Exit(2)
 	}
 	fmt.Fprintln(out, "in sync")
